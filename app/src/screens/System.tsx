@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
-import { Badge, Btn, Card, Err, Field, fmt, Json, Table, useAction, useApi, utc } from "../ui";
+import { Badge, Btn, Card, Err, Field, fmt, Json, PageHead, Table, useAction, useApi, utc } from "../ui";
 
 export function Tasks() {
   const t = useApi<any[]>("/tasks", [], true);
@@ -12,14 +12,14 @@ export function Tasks() {
   const act = (id: string, x: string) => a.run(() => api.post(`/tasks/${id}/${x}`), () => `Action « ${x} » appliquée`);
   return (
     <div>
-      <h1>Tâches, journaux & diagnostics</h1>
+      <PageHead title="Tâches & journaux" sub="File de tâches persistante, journal structuré (UTC) et audit des actions." />
       {a.view}
       <div className="grid">
         <Card title="Tâches" wide>
           <Err msg={t.error} />
           <Table rows={t.data} onRow={setSel} cols={[
             { k: "created_at", t: "Créée (UTC)" }, { k: "kind", t: "Type" }, { k: "state", t: "État", f: (r) => <Badge s={r.state} /> },
-            { k: "progress", t: "Progr.", f: (r) => `${fmt(r.progress * 100, 0)} %` }, { k: "attempts", t: "Essais", num: true },
+            { k: "progress", t: "Progr.", f: (r) => <div style={{ display: "flex", gap: 6, alignItems: "center" }}><div className="progress" style={{ width: 70, minWidth: 70 }}><i style={{ width: `${r.progress * 100}%` }} /></div>{fmt(r.progress * 100, 0)} %</div> }, { k: "attempts", t: "Essais", num: true },
             { k: "error", t: "Erreur", f: (r) => (r.error ?? "").slice(0, 80) },
             { k: "id", t: "Actions", f: (r) => <span className="actions" onClick={(e) => e.stopPropagation()}>
               {["queued", "running"].includes(r.state) && r.kind === "campaign" && <button className="btn" onClick={() => act(r.id, "pause")}>Pause</button>}
@@ -160,7 +160,9 @@ export function Settings() {
   const num = (k: string) => (e: any) => setLim({ ...lim, [k]: e.target.value === "" ? null : Number(e.target.value) });
   return (
     <div>
-      <h1>Paramètres, ressources & sauvegardes</h1>
+      <PageHead title="Paramètres & sauvegardes" sub="Limites de risque, ressources, calendrier, mises à jour, sauvegardes.">
+        <button className="btn" onClick={() => window.dispatchEvent(new Event("qlab:personalize"))}>Personnaliser l'interface…</button>
+      </PageHead>
       <div className="grid">
         <Card title="Limites absolues de risque (contrôleur indépendant)">
           <p className="muted">Ces limites s'imposent à toutes les stratégies et ne font pas partie de l'espace de recherche. Valeurs initiales configurables, pas des recommandations. Plafonds logiciels : risque/trade ≤ 5 %, perte journalière ≤ 20 %, drawdown ≤ 60 %.</p>

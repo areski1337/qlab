@@ -108,12 +108,30 @@ const SNAP_DIR = process.env.QLAB_UI_SNAPSHOT_DIR;
 // Mode QA : capture chaque écran dans une fenêtre cachée (aucune interaction avec le bureau), puis quitte.
 async function snapshots(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
+  const theme = process.env.QLAB_UI_SNAPSHOT_THEME;  // QA : capturer dans un thème donné (nocturne, graphite, ivoire, ambre)
+  if (theme && /^[a-z]+$/.test(theme)) {
+    await win!.webContents.executeJavaScript(`(() => { const k = "qlab.prefs.v1"; const p = JSON.parse(localStorage.getItem(k) || "{}"); p.theme = "${theme}"; localStorage.setItem(k, JSON.stringify(p)); })()`);
+    win!.webContents.reload();
+    await new Promise((r) => setTimeout(r, 3000));
+  }
   const n = await win!.webContents.executeJavaScript("document.querySelectorAll('nav button').length");
   for (let i = 0; i < n; i++) {
     await win!.webContents.executeJavaScript(`document.querySelectorAll('nav button')[${i}].click()`);
     await new Promise((r) => setTimeout(r, 2500));
     const img = await win!.webContents.capturePage();
     fs.writeFileSync(path.join(dir, `screen-${String(i + 1).padStart(2, "0")}.png`), img.toPNG());
+    // vue détaillée : première ligne cliquable de l'écran (dataset, révision, évaluation…)
+    if (await win!.webContents.executeJavaScript("(() => { const r = document.querySelector('main tbody tr.click'); if (r) r.click(); return !!r; })()")) {
+      await new Promise((r) => setTimeout(r, 3500));
+      // vue détaillée, page par page (défilement de <main>) : graphiques sous la ligne de flottaison inclus
+      for (let k = 0; k < 4; k++) {
+        const img2 = await win!.webContents.capturePage();
+        fs.writeFileSync(path.join(dir, `screen-${String(i + 1).padStart(2, "0")}-b${k}.png`), img2.toPNG());
+        const more = await win!.webContents.executeJavaScript("(() => { const m = document.querySelector('main'); const t = m.scrollTop; m.scrollTop += m.clientHeight - 40; return m.scrollTop > t; })()");
+        if (!more) break;
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    }
   }
   fs.writeFileSync(path.join(dir, "renderer-log.txt"), engineLog.filter((l) => l.startsWith("[renderer")).join(""));
   app.quit();

@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des compos
 
 ## [Non publié]
 ### Ajouté
+- Refonte de l'interface (identité « Nocturne ») : barre haute avec écrans favoris, rail d'icônes groupé, palette de commandes (Ctrl+K : écrans, campagnes, révisions, thèmes), panneau d'activité (tâches + flux d'événements), barre d'état (moteur, worker, schéma, disque, heure UTC), raccourcis Alt+1…9 / Ctrl+J / Ctrl+B / Ctrl+,.
+- Personnalisation (préférences locales au poste) : 4 thèmes (Nocturne, Graphite, Ivoire, Ambre), couleur d'accent, palettes hausse/baisse (dont daltonienne), densité, type de graphique de prix, grille, réticule aimanté, favoris, écran de départ.
+- Graphiques : prix en bougies et capital + drawdown via `lightweight-charts` 5.2.1 (TradingView, Apache-2.0, logo d'attribution conservé) ; graphiques explicatifs SVG (walk-forward, WFO, Monte Carlo, hasard, sensibilité, stress de coûts, distribution des R, profit mensuel, heure × jour, corrélations, contribution au risque, entonnoir de validation, parité MT5), chacun accompagné d'une « lecture » en clair.
+- Mode capture QA : défilement page par page et vue détaillée ; `QLAB_UI_SNAPSHOT_THEME` pour capturer dans un thème donné.
 - Mises à jour de l'application : source configurable (dossier local, partage réseau ou URL https) contenant `latest.json` et l'installateur ; vérification au démarrage, téléchargement et installation uniquement sur action de l'utilisateur, empreinte SHA-512 et taille contrôlées avant exécution, installation NSIS silencieuse puis redémarrage ; tâches en cours signalées avant installation (reprises en pause au redémarrage).
 - `scripts/build_installer.ps1 -Version x.y.z -Publish <dossier> -Notes "…"` : fixe la version, génère `latest.json` et publie.
 

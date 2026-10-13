@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Spark } from "./charts";
 
 export const fmt = (x: any, d = 2) =>
   x === null || x === undefined || Number.isNaN(x) ? "—" : typeof x === "number" ? x.toLocaleString("fr-FR", { maximumFractionDigits: d }) : String(x);
@@ -27,12 +28,45 @@ export function useApi<T = any>(path: string | null, deps: any[] = [], live = fa
   return { data, error, loading, reload };
 }
 
-export function Card(p: { title?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; wide?: boolean }) {
+export function Card(p: { title?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; wide?: boolean; span2?: boolean }) {
   return (
-    <section className={"card" + (p.wide ? " wide" : "")}>
+    <section className={"card" + (p.wide ? " wide" : "") + (p.span2 ? " span2" : "")}>
       {(p.title || p.actions) && <header><h3>{p.title}</h3><div className="actions">{p.actions}</div></header>}
       {p.children}
     </section>
+  );
+}
+
+/** En-tête d'écran : titre, sous-titre, actions à droite. */
+export function PageHead({ title, sub, children }: { title: string; sub?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div className="pagehead">
+      <div><h1>{title}</h1>{sub && <div className="sub">{sub}</div>}</div>
+      <span className="grow" />
+      {children}
+    </div>
+  );
+}
+
+/** Tuile KPI : libellé, valeur, contexte, tendance optionnelle. `tone` colore selon le signe ou un verdict. */
+export function Tile({ l, v, s, spark, tone, hint }: { l: string; v: React.ReactNode; s?: React.ReactNode; spark?: number[]; tone?: "good" | "bad" | null; hint?: string }) {
+  return (
+    <div className={"tile" + (tone ? " " + tone : "")} title={hint}>
+      <div className="l"><span>{l}</span></div>
+      <div className="v">{v}</div>
+      {s && <div className="s">{s}</div>}
+      {spark && <Spark ys={spark} />}
+    </div>
+  );
+}
+export const signTone = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? null : x >= 0 ? "good" : "bad");
+
+/** Contrôle segmenté. */
+export function Seg<T extends string>({ value, options, onChange, label }: { value: T; options: [T, string][]; onChange: (v: T) => void; label?: string }) {
+  return (
+    <div className="seg" role="radiogroup" aria-label={label}>
+      {options.map(([k, l]) => <button key={k} role="radio" aria-checked={value === k} className={value === k ? "on" : ""} onClick={() => onChange(k)}>{l}</button>)}
+    </div>
   );
 }
 
@@ -52,7 +86,7 @@ export function Badge({ s }: { s: string }) {
   return <span className={"badge b-" + s}>{STATUS_FR[s] ?? s}</span>;
 }
 
-export function Btn(p: React.ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean; kind?: "primary" | "danger" }) {
+export function Btn(p: React.ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean; kind?: "primary" | "danger" | "ghost" }) {
   const { busy, kind, className, ...rest } = p;
   return <button {...rest} className={`btn ${kind ?? ""} ${className ?? ""}`} disabled={p.disabled || busy}>{busy ? "…" : p.children}</button>;
 }
@@ -71,8 +105,9 @@ export function useAction() {
   return { busy, run, view };
 }
 
+/** Tableau triable. `tone` : colonnes numériques colorées selon le signe. */
 export function Table({ cols, rows, onRow, empty = "Aucune donnée." }: {
-  cols: { k: string; t: string; f?: (r: any) => React.ReactNode; num?: boolean }[]; rows: any[] | null; onRow?: (r: any) => void; empty?: string;
+  cols: { k: string; t: string; f?: (r: any) => React.ReactNode; num?: boolean; tone?: boolean }[]; rows: any[] | null; onRow?: (r: any) => void; empty?: string;
 }) {
   const [sort, setSort] = useState<{ k: string; asc: boolean } | null>(null);
   if (!rows) return <p className="muted">Chargement…</p>;
@@ -85,75 +120,19 @@ export function Table({ cols, rows, onRow, empty = "Aucune donnée." }: {
   }) : rows;
   return (
     <div className="tablewrap"><table>
-      <thead><tr>{cols.map((c) => (
-        <th key={c.k} className={c.num ? "num" : ""} onClick={() => setSort({ k: c.k, asc: sort?.k === c.k ? !sort.asc : false })}>
+      <thead><tr>{cols.map((c, i) => (
+        <th key={c.k + i} className={c.num ? "num" : ""} aria-sort={sort?.k === c.k ? (sort.asc ? "ascending" : "descending") : undefined}
+          onClick={() => setSort({ k: c.k, asc: sort?.k === c.k ? !sort.asc : false })}>
           {c.t}{sort?.k === c.k ? (sort.asc ? " ▲" : " ▼") : ""}</th>))}</tr></thead>
       <tbody>{sorted.map((r, i) => (
         <tr key={r.id ?? i} onClick={() => onRow?.(r)} className={onRow ? "click" : ""}>
-          {cols.map((c) => <td key={c.k} className={c.num ? "num" : ""}>{c.f ? c.f(r) : fmt(get(r, c.k))}</td>)}
+          {cols.map((c, j) => {
+            const v = get(r, c.k);
+            const tone = c.tone && typeof v === "number" ? (v > 0 ? " pos" : v < 0 ? " neg" : "") : "";
+            return <td key={c.k + j} className={(c.num ? "num" : "") + tone}>{c.f ? c.f(r) : fmt(v)}</td>;
+          })}
         </tr>))}</tbody>
     </table></div>
-  );
-}
-
-/** Courbe simple (SVG) avec unités et période affichées. */
-export function LineChart({ xs, ys, unit, label, height = 200 }: { xs: number[]; ys: number[]; unit: string; label: string; height?: number }) {
-  const ref = useRef<SVGSVGElement>(null);
-  const [hover, setHover] = useState<number | null>(null);
-  if (!ys.length) return <p className="muted">Pas de données à tracer.</p>;
-  const W = 800, H = height, P = 36;
-  const lo = Math.min(...ys), hi = Math.max(...ys) === lo ? lo + 1 : Math.max(...ys);
-  const X = (i: number) => P + (i / Math.max(1, ys.length - 1)) * (W - 2 * P);
-  const Y = (v: number) => H - P - ((v - lo) / (hi - lo)) * (H - 2 * P);
-  const d = ys.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join("");
-  const onMove = (e: React.MouseEvent) => {
-    const r = ref.current!.getBoundingClientRect();
-    const i = Math.round(((e.clientX - r.left) / r.width * W - P) / (W - 2 * P) * (ys.length - 1));
-    setHover(Math.max(0, Math.min(ys.length - 1, i)));
-  };
-  return (
-    <figure className="chart">
-      <svg ref={ref} viewBox={`0 0 ${W} ${H}`} onMouseMove={onMove} onMouseLeave={() => setHover(null)} role="img" aria-label={label}>
-        <line x1={P} x2={W - P} y1={H - P} y2={H - P} className="axis" />
-        <text x={4} y={Y(hi) + 4} className="tick">{fmt(hi)}</text>
-        <text x={4} y={Y(lo) + 4} className="tick">{fmt(lo)}</text>
-        <path d={d} className="series" />
-        {hover !== null && <>
-          <line x1={X(hover)} x2={X(hover)} y1={P / 2} y2={H - P} className="cursor" />
-          <circle cx={X(hover)} cy={Y(ys[hover])} r={3} className="dot" />
-          <text x={Math.min(X(hover) + 6, W - 200)} y={P / 2 + 10} className="tip">{fmt(ys[hover])} {unit} — {utc(xs[hover])}</text>
-        </>}
-      </svg>
-      <figcaption>{label} · unité : {unit} · {utc(xs[0])} → {utc(xs[xs.length - 1])}</figcaption>
-    </figure>
-  );
-}
-
-/** Nuage de points (front de Pareto). */
-export function Scatter({ pts, xl, yl, onPick, highlight }: {
-  pts: { x: number; y: number; id: string; front?: boolean }[]; xl: string; yl: string; onPick?: (id: string) => void; highlight?: string;
-}) {
-  const ok = pts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-  if (!ok.length) return <p className="muted">Aucun point calculable.</p>;
-  const W = 800, H = 340, P = 44;
-  const xs = ok.map((p) => p.x), ys = ok.map((p) => p.y);
-  const [x0, x1] = [Math.min(...xs), Math.max(...xs) === Math.min(...xs) ? Math.min(...xs) + 1 : Math.max(...xs)];
-  const [y0, y1] = [Math.min(...ys), Math.max(...ys) === Math.min(...ys) ? Math.min(...ys) + 1 : Math.max(...ys)];
-  const X = (v: number) => P + (v - x0) / (x1 - x0) * (W - 2 * P), Y = (v: number) => H - P - (v - y0) / (y1 - y0) * (H - 2 * P);
-  return (
-    <figure className="chart">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${yl} en fonction de ${xl}`}>
-        <line x1={P} x2={W - P} y1={H - P} y2={H - P} className="axis" />
-        <line x1={P} x2={P} y1={P / 2} y2={H - P} className="axis" />
-        <text x={W / 2} y={H - 8} className="tick" textAnchor="middle">{xl} ({fmt(x0)} → {fmt(x1)})</text>
-        <text x={8} y={16} className="tick">{yl} ({fmt(y0)} → {fmt(y1)})</text>
-        {ok.map((p) => (
-          <circle key={p.id} cx={X(p.x)} cy={Y(p.y)} r={p.id === highlight ? 6 : p.front ? 4.5 : 3}
-            className={"pt" + (p.front ? " front" : "") + (p.id === highlight ? " hl" : "")} onClick={() => onPick?.(p.id)}>
-            <title>{p.id} — {xl} {fmt(p.x)}, {yl} {fmt(p.y)}</title>
-          </circle>))}
-      </svg>
-    </figure>
   );
 }
 
