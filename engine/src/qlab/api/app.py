@@ -289,6 +289,7 @@ class RunReq(BaseModel):
     date_from: str | None = Field(None, alias="from")
     date_to: str | None = Field(None, alias="to")
     model: int = 1
+    transfer_datasets: dict[str, str] = {}
 
 
 @app.post(f"{API}/genomes/{{rid}}/{{action}}")
@@ -301,7 +302,7 @@ def genome_action(rid: str, action: str, body: RunReq, lab=Depends(L)):
             raise HTTPException(403, "segment final : utiliser l'action final-test (consommation tracée)")
         return submit(lab, "backtest", {**p, "segment": body.segment})
     if action == "advance":
-        return submit(lab, "advance", {**p, "stop_at": body.stop_at})
+        return submit(lab, "advance", {**p, "stop_at": body.stop_at, "transfer_datasets": body.transfer_datasets})
     if action == "final-test":
         return submit(lab, "final_test", p)
     if action == "mt5-verify":
@@ -417,6 +418,30 @@ def create_portfolio(body: PortfolioIn, lab=Depends(L)):
         raise HTTPException(403, "le holdout final n'est pas utilisable pour construire un portefeuille")
     try:
         return service.build(lab, body.name, body.revision_ids, body.method, body.segment, body.w_min, body.w_max)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+class PortfolioFromCampaign(BaseModel):
+    campaign_id: str
+    method: str = "min_corr"
+    w_min: float = Field(0.05, ge=0, le=1)
+    w_max: float = Field(0.5, gt=0, le=1)
+
+
+@app.post(f"{API}/portfolios/from-campaign")
+def portfolio_from_campaign(body: PortfolioFromCampaign, lab=Depends(L)):
+    """Portefeuille des révisions de la campagne au statut >= historically_tested et non rejetées."""
+    from ..portfolio import service
+    ok = ("historically_tested", "robustness_tested", "oos_evaluated", "reference_matched", "mt5_validated", "demo_observed")
+    ids = [r[0] for r in lab.con.execute(
+        f"SELECT id FROM genome_revisions WHERE campaign_id=? AND status IN ({','.join('?' * len(ok))})",
+        (body.campaign_id, *ok))]
+    if len(ids) < 2:
+        raise HTTPException(409, f"{len(ids)} stratégie(s) éligible(s) (statut >= historically_tested, non rejetée) : "
+                                 "au moins deux requises")
+    try:
+        return service.build(lab, f"Portefeuille {body.campaign_id}", ids, body.method, "research", body.w_min, body.w_max)
     except ValueError as e:
         raise HTTPException(422, str(e))
 

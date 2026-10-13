@@ -33,6 +33,7 @@ from . import protocol as proto
 DEFAULT_CRITERIA = {
     "min_trades": 30,
     "wf_positive_folds_ratio": 0.5,
+    "wfo_positive_folds_ratio": 0.5,
     "sensitivity_positive_ratio": 0.6,
     "cost_stress_x15_expectancy_positive": True,
     "mc_p95_max_dd_pct": 35.0,
@@ -59,6 +60,40 @@ def walk_forward(g, cache, costs, risk, protocol) -> dict:
         folds.append({"fold": f["fold"], "window": f["test"], **_summ(m)})
     pos = [f for f in folds if (f["expectancy"] or 0) > 0]
     return {"folds": folds, "positive_ratio": len(pos) / len(folds) if folds else None}
+
+
+def walk_forward_reopt(g, cache, costs, risk, protocol, n_trials: int = 24, seed: int = 0) -> dict:
+    """Walk-forward d'optimisation : structure figée ; paramètres/constantes/sorties ré-optimisés sur la fenêtre
+    d'apprentissage (ancrée) de chaque pli, jeu retenu = meilleur Sharpe avec >= 10 trades, évalué sur le pli suivant.
+    WFE = Sharpe moyen hors pli / Sharpe moyen d'apprentissage des jeux retenus (None si non calculable)."""
+    import random
+    from ..evolution import operators as ops
+    rng = random.Random(seed)
+    htfs = tuple(sorted(cache.context))
+    folds = []
+    for f in proto.walk_forward(len(cache.bars), protocol):
+        cands = [g]
+        tries = 0
+        while len(cands) < n_trials and tries < n_trials * 4:
+            tries += 1
+            r = ops.mutate(rng, rng.choice(cands), rng.choice(["param", "const", "exit"]), htfs)
+            if r:
+                cands.append(r[0])
+        best, best_m = g, None
+        for c in cands:
+            _, m = _run(c, cache, costs, risk, f["fit"])
+            if m["n_trades"] >= 10 and m["sharpe"] is not None and (best_m is None or m["sharpe"] > best_m["sharpe"]):
+                best, best_m = c, m
+        _, mt = _run(best, cache, costs, risk, f["test"])
+        folds.append({"fold": f["fold"], "fit": f["fit"], "test": f["test"], "candidates": len(cands),
+                      "chosen_is_original": model.semantic_hash(best) == model.semantic_hash(g),
+                      "fit_sharpe": best_m["sharpe"] if best_m else None, **_summ(mt)})
+    pos = [x for x in folds if (x["expectancy"] or 0) > 0]
+    fs = [x["fit_sharpe"] for x in folds if x["fit_sharpe"] is not None]
+    ts = [x["sharpe"] for x in folds if x["sharpe"] is not None]
+    wfe = (float(np.mean(ts)) / float(np.mean(fs))) if fs and ts and np.mean(fs) > 0 else None
+    return {"folds": folds, "positive_ratio": len(pos) / len(folds) if folds else None, "wfe": wfe,
+            "oos_net_total": float(sum(x["net_profit"] or 0 for x in folds)), "trials_per_fold": n_trials, "seed": seed}
 
 
 def neighbors(g: dict) -> list[tuple[str, dict]]:
@@ -214,8 +249,22 @@ def daily_moments(res: dict, window_ts) -> tuple[int, float, float]:
     return len(r), float((z ** 3).mean()), float((z ** 4).mean())
 
 
+def transfer(g, caches: dict, costs: dict, risk, protocol) -> dict:
+    """Mêmes règles sur d'autres instruments (fenêtre train+validation de chacun). Informatif, non bloquant :
+    l'absence de transfert n'invalide pas une stratégie spécialisée, mais elle est rapportée."""
+    out = {}
+    for sym, c in caches.items():
+        seg = proto.segments(len(c.bars), protocol)
+        try:
+            _, m = _run(g, c, costs, risk, (seg["train"][0], seg["validation"][1]))
+            out[sym] = _summ(m)
+        except Exception as e:  # coûts inconnus, feature indisponible… : rapporté, jamais masqué
+            out[sym] = {"error": f"{type(e).__name__}: {e}"}
+    return out
+
+
 def run_suite(lab, rev: dict, cache, costs: dict, risk, protocol: dict, campaign_id: str | None = None,
-              criteria: dict = DEFAULT_CRITERIA, seed: int = 0) -> dict:
+              criteria: dict = DEFAULT_CRITERIA, seed: int = 0, transfer_caches: dict | None = None) -> dict:
     g = rev["content"]
     seg = proto.segments(len(cache.bars), protocol)
     window = (seg["train"][0], seg["validation"][1])
@@ -232,12 +281,14 @@ def run_suite(lab, rev: dict, cache, costs: dict, risk, protocol: dict, campaign
     rep = {
         "window": window, "base": _summ(m),
         "walk_forward": walk_forward(g, cache, costs, risk, protocol),
+        "walk_forward_reopt": walk_forward_reopt(g, cache, costs, risk, protocol, seed=seed),
         "sensitivity": sensitivity(g, cache, costs, risk, window),
         "cost_stress": cost_stress(g, cache, costs, risk, window),
         "monte_carlo": monte_carlo(res["trades"], res["initial_equity"], seed=seed),
         "random_baseline": random_baseline(g, cache, costs, risk, window, res["trades"], seed=seed),
         "deflated_sharpe": deflated_sharpe(m["sharpe"], t_obs, skew, kurt, trials or [m["sharpe"]]),
         "criteria": criteria,
+        "transfer": transfer(g, transfer_caches or {}, costs, risk, protocol),
     }
     rep["checks"] = checks(rep, criteria)
     rep["passed"] = all(c["pass"] for c in rep["checks"].values() if c["pass"] is not None) and \
@@ -254,6 +305,8 @@ def checks(rep: dict, c: dict) -> dict:
     return {
         "min_trades": chk(rep["base"]["n_trades"], lambda v: v >= c["min_trades"]),
         "walk_forward": chk(rep["walk_forward"]["positive_ratio"], lambda v: v >= c["wf_positive_folds_ratio"]),
+        "walk_forward_reopt": chk(rep["walk_forward_reopt"]["positive_ratio"],
+                                  lambda v: v >= c["wfo_positive_folds_ratio"] and rep["walk_forward_reopt"]["oos_net_total"] > 0),
         "sensitivity": chk(rep["sensitivity"]["positive_ratio"], lambda v: v >= c["sensitivity_positive_ratio"]),
         "cost_stress_x1.5": chk(rep["cost_stress"]["spread_x1.5"]["expectancy"], lambda v: v > 0),
         "mc_p95_max_dd": chk(mc["bootstrap_max_dd_pct"]["p95"] if mc.get("available") else None,

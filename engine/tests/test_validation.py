@@ -97,3 +97,17 @@ def test_pipeline_records_evidence_or_rejects(env):
     assert out["status"] in ("rejected", "oos_evaluated")
     if out["status"] == "rejected":
         assert trs[-1]["to_status"] == "rejected" and trs[-1]["criteria"]["reason"]
+
+
+def test_walk_forward_reopt(env):
+    lab, cache, rev = env
+    rep = robustness.walk_forward_reopt(rev["content"], cache, COSTS, RiskController(DEFAULT_LIMITS),
+                                        proto.DEFAULT_PROTOCOL, n_trials=6, seed=1)
+    assert len(rep["folds"]) == 4
+    seg = proto.segments(len(cache.bars))
+    for f in rep["folds"]:
+        assert f["fit"][1] == f["test"][0] and f["test"][1] <= seg["validation"][1]  # jamais oos/final
+        assert f["candidates"] >= 1
+    again = robustness.walk_forward_reopt(rev["content"], cache, COSTS, RiskController(DEFAULT_LIMITS),
+                                          proto.DEFAULT_PROTOCOL, n_trials=6, seed=1)
+    assert again == rep  # reproductible à graine fixe

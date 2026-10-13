@@ -74,8 +74,10 @@ def advance(lab, task):
     p = task["payload"]
     cache = cache_for(lab, p["dataset_version_id"], p.get("context"))
     _, risk = _risk(lab)
+    transfer = {sym: cache_for(lab, v, {}) for sym, v in (p.get("transfer_datasets") or {}).items()}
     return pipeline.advance(lab, p["revision_id"], cache, p.get("cost_profile") or DEFAULT_COST_PROFILE, risk,
-                            campaign_id=p.get("campaign_id"), stop_at=p.get("stop_at", "oos_evaluated"))
+                            campaign_id=p.get("campaign_id"), stop_at=p.get("stop_at", "oos_evaluated"),
+                            transfer_caches=transfer)
 
 
 @handler("final_test")

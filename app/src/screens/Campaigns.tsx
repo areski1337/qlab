@@ -11,6 +11,7 @@ export function Campaigns() {
   const ds = useApi<any[]>("/datasets", [], true);
   const camps = useApi<any[]>("/campaigns", [], true);
   const a = useAction();
+  const [extra, setExtra] = useState<string[]>([]);
   const [f, setF] = useState<any>({
     name: "Campagne", dataset_version_id: "", ctx: "", tribes: ["consistency", "growth", "exploration", "specialization"],
     specialization_session: "london_kz", population: 24, generations_per_tribe: 20, merge_generations: 8, seed: 42, workers: 4,
@@ -33,6 +34,8 @@ export function Campaigns() {
       },
     };
     const r = await api.post("/campaigns", { config: cfg });
+    // campagnes supplémentaires : mêmes réglages, un dataset par symbole (sans contexte HTF spécifique)
+    for (const d of extra) await api.post("/campaigns", { config: { ...cfg, name: `${f.name} · ${ds.data!.find((x) => x.id === d)?.canonical_symbol}`, dataset_version_id: d, context_version_ids: {} } });
     go({ screen: "lab", campaign: r.campaign_id });
     return r;
   });
@@ -53,6 +56,11 @@ export function Campaigns() {
               <select value={f.ctx} onChange={set("ctx")}>
                 <option value="">aucun</option>
                 {htfs.map((d) => <option key={d.id} value={d.id}>{d.timeframe} v{d.version}</option>)}
+              </select>
+            </Field>
+            <Field label="Lancer aussi sur (multi-symboles)">
+              <select multiple size={3} value={extra} onChange={(e) => setExtra(Array.from(e.target.selectedOptions).map((o) => o.value))}>
+                {ds.data?.filter((d) => base && d.timeframe === base.timeframe && d.id !== base.id).map((d) => <option key={d.id} value={d.id}>{d.canonical_symbol} {d.timeframe} v{d.version}</option>)}
               </select>
             </Field>
             <Field label="Côtés"><select value={f.sides} onChange={set("sides")}><option value="both">long + short</option><option value="long">long</option><option value="short">short</option></select></Field>

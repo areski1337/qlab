@@ -28,6 +28,11 @@ export function Portfolio() {
           <Table rows={eligible} empty="Aucune stratégie au statut ≥ filtrée." cols={[
             { k: "id", t: "", f: (r) => <input type="checkbox" checked={sel.includes(r.id)} onChange={(e) => setSel(e.target.checked ? [...sel, r.id] : sel.filter((x) => x !== r.id))} /> },
             { k: "id", t: "Révision" }, { k: "status", t: "Statut", f: (r) => <Badge s={r.status} /> }, { k: "campaign_id", t: "Campagne" }]} />
+          <Btn busy={a.busy} onClick={() => a.run(async () => {
+            const cid = window.prompt("Identifiant de campagne (camp_…)") ?? "";
+            const r = await api.post("/portfolios/from-campaign", { campaign_id: cid.trim(), method: f.method, w_min: f.w_min, w_max: f.w_max });
+            setCur(r); return r;
+          }, (r) => `Portefeuille ${r.id} créé depuis la campagne.`)}>Depuis une campagne…</Btn>
           <Btn kind="primary" busy={a.busy} disabled={sel.length < 2} onClick={() => a.run(async () => { const r = await api.post("/portfolios", { ...f, revision_ids: sel }); setCur(r); return r; }, (r) => `Portefeuille ${r.id} créé.`)}>Construire ({sel.length})</Btn>
           {a.view}
         </Card>

@@ -15,7 +15,7 @@ OOS_CRITERIA = {"min_trades": 15, "expectancy_positive": True, "profit_factor_mi
 
 def advance(lab, rev_id: str, cache, costs: dict, risk, protocol: dict = proto.DEFAULT_PROTOCOL,
             campaign_id: str | None = None, criteria: dict = robustness.DEFAULT_CRITERIA,
-            stop_at: str = "oos_evaluated", seed: int = 0) -> dict:
+            stop_at: str = "oos_evaluated", seed: int = 0, transfer_caches: dict | None = None) -> dict:
     con = lab.con
     log = []
 
@@ -57,7 +57,7 @@ def advance(lab, rev_id: str, cache, costs: dict, risk, protocol: dict = proto.D
         return {"status": status(), "log": log}
 
     if status() == "historically_tested":
-        rep = robustness.run_suite(lab, rev, cache, costs, risk, protocol, campaign_id, criteria, seed)
+        rep = robustness.run_suite(lab, rev, cache, costs, risk, protocol, campaign_id, criteria, seed, transfer_caches)
         sha = lab.store.put_json(rep, kind="robustness_report", meta={"revision": rev_id})
         failed = [k for k, c in rep["checks"].items() if c["pass"] is not True]
         if rep["passed"]:
