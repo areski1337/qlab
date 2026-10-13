@@ -1,0 +1,23 @@
+{
+  "schema": "qlab.genome/1.0",
+  "market": {"symbol": "XAUUSD", "timeframe": "M5"},
+  "entry": {
+    "long": {"id": "n1", "op": "and", "children": [
+      {"id": "n2", "op": "event", "ref": {"feature": "fvg", "params": {"min_atr": 0.3, "expiry": 60}, "output": "bull_retest"}},
+      {"id": "n3", "op": "compare", "left": {"feature": "structure", "params": {"left": 3, "right": 3, "break_on": "close", "disp_atr": 1.0}, "output": "trend", "tf": "H1"},
+       "cmp": "gt", "right": {"const": 0}},
+      {"id": "n4", "op": "or", "children": [
+        {"id": "n5", "op": "event", "ref": {"feature": "session", "params": {"name": "london_kz"}, "output": "active"}},
+        {"id": "n6", "op": "event", "ref": {"feature": "session", "params": {"name": "ny_am_kz"}, "output": "active"}}
+      ]},
+      {"id": "n7", "op": "compare", "left": {"feature": "range_position", "params": {"lookback": 100}, "output": "value"},
+       "cmp": "lt", "right": {"const": 50}}
+    ]},
+    "short": null
+  },
+  "exit": {"stop": {"type": "swing", "left": 3, "right": 3, "buffer_atr": 0.2}, "target": {"type": "rr", "rr": 2.5},
+           "break_even": null, "trailing": {"period": 14, "mult": 2.5, "activate_r": 1.5}, "time_stop_bars": 144,
+           "exit_on_opposite": false},
+  "sizing": {"risk_pct": 0.5},
+  "management": {"max_trades_per_day": 2, "cooldown_bars": 6}
+}

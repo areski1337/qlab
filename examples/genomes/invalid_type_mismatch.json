@@ -1,0 +1,13 @@
+{
+  "schema": "qlab.genome/1.0",
+  "market": {"symbol": "XAUUSD", "timeframe": "M5"},
+  "entry": {
+    "long": {"id": "n1", "op": "compare", "left": {"feature": "rsi", "params": {"period": 14}, "output": "value"},
+             "cmp": "gt", "right": {"feature": "ema", "params": {"period": 20}, "output": "value"}},
+    "short": null
+  },
+  "exit": {"stop": {"type": "atr", "period": 14, "mult": 2.0}, "target": null, "break_even": null, "trailing": null,
+           "time_stop_bars": null, "exit_on_opposite": false},
+  "sizing": {"risk_pct": 0.5},
+  "management": {"max_trades_per_day": 3, "cooldown_bars": 0}
+}

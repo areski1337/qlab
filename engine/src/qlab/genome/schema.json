@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qlab.genome/1.0",
+  "title": "Génome canonique de stratégie QLab v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "market", "entry", "exit", "sizing", "management"],
+  "properties": {
+    "schema": {"const": "qlab.genome/1.0"},
+    "market": {
+      "type": "object", "additionalProperties": false, "required": ["symbol", "timeframe"],
+      "properties": {
+        "symbol": {"type": "string", "pattern": "^[A-Za-z0-9._#-]{1,32}$"},
+        "timeframe": {"enum": ["M1", "M5", "M15", "M30", "H1", "H4"]}
+      }
+    },
+    "entry": {
+      "type": "object", "additionalProperties": false, "required": ["long", "short"],
+      "properties": {
+        "long": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/node"}]},
+        "short": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/node"}]}
+      }
+    },
+    "exit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stop", "target", "break_even", "trailing", "time_stop_bars", "exit_on_opposite"],
+      "properties": {
+        "stop": {"oneOf": [
+          {"type": "object", "additionalProperties": false, "required": ["type", "period", "mult"],
+           "properties": {"type": {"const": "atr"}, "period": {"type": "integer", "minimum": 2, "maximum": 200},
+                          "mult": {"type": "number", "minimum": 0.2, "maximum": 20}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "points"],
+           "properties": {"type": {"const": "points"}, "points": {"type": "integer", "minimum": 1, "maximum": 1000000}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "left", "right", "buffer_atr"],
+           "properties": {"type": {"const": "swing"}, "left": {"type": "integer", "minimum": 1, "maximum": 20},
+                          "right": {"type": "integer", "minimum": 1, "maximum": 20},
+                          "buffer_atr": {"type": "number", "minimum": 0, "maximum": 5}}}
+        ]},
+        "target": {"oneOf": [
+          {"type": "null"},
+          {"type": "object", "additionalProperties": false, "required": ["type", "rr"],
+           "properties": {"type": {"const": "rr"}, "rr": {"type": "number", "minimum": 0.2, "maximum": 20}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "period", "mult"],
+           "properties": {"type": {"const": "atr"}, "period": {"type": "integer", "minimum": 2, "maximum": 200},
+                          "mult": {"type": "number", "minimum": 0.2, "maximum": 40}}}
+        ]},
+        "break_even": {"oneOf": [{"type": "null"},
+          {"type": "object", "additionalProperties": false, "required": ["at_r"],
+           "properties": {"at_r": {"type": "number", "minimum": 0.2, "maximum": 10}}}]},
+        "trailing": {"oneOf": [{"type": "null"},
+          {"type": "object", "additionalProperties": false, "required": ["period", "mult", "activate_r"],
+           "properties": {"period": {"type": "integer", "minimum": 2, "maximum": 200},
+                          "mult": {"type": "number", "minimum": 0.2, "maximum": 20},
+                          "activate_r": {"type": "number", "minimum": 0, "maximum": 10}}}]},
+        "time_stop_bars": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1, "maximum": 10000}]},
+        "exit_on_opposite": {"type": "boolean"}
+      }
+    },
+    "sizing": {
+      "type": "object", "additionalProperties": false, "required": ["risk_pct"],
+      "properties": {"risk_pct": {"type": "number", "exclusiveMinimum": 0, "maximum": 100}}
+    },
+    "management": {
+      "type": "object", "additionalProperties": false, "required": ["max_trades_per_day", "cooldown_bars"],
+      "properties": {
+        "max_trades_per_day": {"type": "integer", "minimum": 1, "maximum": 100},
+        "cooldown_bars": {"type": "integer", "minimum": 0, "maximum": 1000}
+      }
+    }
+  },
+  "$defs": {
+    "ref": {
+      "type": "object", "additionalProperties": false, "required": ["feature", "params", "output"],
+      "properties": {
+        "feature": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+        "params": {"type": "object"},
+        "output": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+        "tf": {"enum": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]},
+        "shift": {"type": "integer", "minimum": 0, "maximum": 50}
+      }
+    },
+    "operand": {"oneOf": [
+      {"$ref": "#/$defs/ref"},
+      {"type": "object", "additionalProperties": false, "required": ["const"], "properties": {"const": {"type": "number"}}}
+    ]},
+    "node": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["id", "op", "children"],
+       "properties": {"id": {"$ref": "#/$defs/id"}, "op": {"enum": ["and", "or"]},
+                      "children": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/node"}}}},
+      {"type": "object", "additionalProperties": false, "required": ["id", "op", "children"],
+       "properties": {"id": {"$ref": "#/$defs/id"}, "op": {"const": "not"},
+                      "children": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/node"}}}},
+      {"type": "object", "additionalProperties": false, "required": ["id", "op", "left", "cmp", "right"],
+       "properties": {"id": {"$ref": "#/$defs/id"}, "op": {"const": "compare"},
+                      "left": {"$ref": "#/$defs/ref"}, "cmp": {"enum": ["gt", "lt", "cross_above", "cross_below"]},
+                      "right": {"$ref": "#/$defs/operand"}}},
+      {"type": "object", "additionalProperties": false, "required": ["id", "op", "ref"],
+       "properties": {"id": {"$ref": "#/$defs/id"}, "op": {"const": "event"}, "ref": {"$ref": "#/$defs/ref"}}}
+    ]},
+    "id": {"type": "string", "pattern": "^n[0-9]{1,6}$"}
+  }
+}
