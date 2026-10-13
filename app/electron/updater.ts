@@ -1,11 +1,12 @@
 // Mises à jour de l'application : lit un manifeste `latest.json` publié par scripts/build_installer.ps1
-// dans une source choisie par l'utilisateur (dossier local / partage réseau, ou URL https), télécharge
+// dans une source : par défaut les releases GitHub du dépôt QLab (github:propriétaire/dépôt), sinon un dossier
+// local / partage réseau ou une URL https choisis par l'utilisateur. Télécharge
 // l'installateur, vérifie son empreinte SHA-512 et ne l'exécute qu'à la demande explicite de l'utilisateur.
 // Les données (base, artefacts, datasets) vivent hors du dossier d'installation : la mise à jour ne les touche
 // pas ; les migrations de base s'appliquent au redémarrage du moteur, avec sauvegarde préalable.
 import { app } from "electron";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -18,13 +19,15 @@ export type UpdateState = {
 const CFG = () => path.join(app.getPath("userData"), "update.json");
 const DIR = () => path.join(app.getPath("userData"), "updates");
 const FILE_RE = /^[A-Za-z0-9 ._-]+\.exe$/;
+const GH_RE = /^github:([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)$/;
+export const DEFAULT_SOURCE = "github:__OWNER__/qlab";  // releases publiées par scripts/build_installer.ps1 -Release
 
 const state: UpdateState = { current: "", source: null, checked_at: null, available: null,
   downloaded: null, progress: null, error: null };
 
 export function getSource(): string | null {
   if (process.env.QLAB_UPDATE_SOURCE) return process.env.QLAB_UPDATE_SOURCE;
-  try { return JSON.parse(fs.readFileSync(CFG(), "utf-8")).source || null; } catch { return null; }
+  try { return JSON.parse(fs.readFileSync(CFG(), "utf-8")).source || DEFAULT_SOURCE; } catch { return DEFAULT_SOURCE; }
 }
 
 function isUrl(s: string) { return /^https?:\/\//i.test(s); }
@@ -32,7 +35,7 @@ function isUrl(s: string) { return /^https?:\/\//i.test(s); }
 export function setSource(src: string): UpdateState {
   const s = src.trim();
   if (s && isUrl(s) && !/^https:\/\//i.test(s)) throw new Error("source refusée : http non chiffré (utiliser https ou un dossier)");
-  if (s && !isUrl(s) && !path.isAbsolute(s)) throw new Error("source refusée : chemin de dossier absolu ou URL https attendu");
+  if (s && !isUrl(s) && !GH_RE.test(s) && !path.isAbsolute(s)) throw new Error("source refusée : github:propriétaire/dépôt, chemin de dossier absolu ou URL https attendu");
   fs.mkdirSync(path.dirname(CFG()), { recursive: true });
   fs.writeFileSync(CFG(), JSON.stringify({ source: s || null }, null, 2));
   Object.assign(state, { source: s || null, available: null, downloaded: null, error: null });
@@ -53,9 +56,38 @@ function join(src: string, name: string) {
   return isUrl(src) ? new URL(encodeURIComponent(name), src.endsWith("/") ? src : src + "/").toString() : path.join(src, name);
 }
 
+// Jeton GitHub (dépôt privé) : variable d'environnement, sinon session GitHub CLI du poste. Jamais stocké ni journalisé,
+// envoyé uniquement à api.github.com (fetch retire l'en-tête Authorization lors de la redirection vers le stockage signé).
+let ghToken: string | null | undefined;
+function token(): string | null {
+  if (ghToken !== undefined) return ghToken;
+  ghToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || null;
+  for (const exe of ghToken ? [] : ["gh", "C:\\Program Files\\GitHub CLI\\gh.exe"]) {
+    const r = spawnSync(exe, ["auth", "token"], { encoding: "utf-8", windowsHide: true, timeout: 10_000 });
+    if (r.status === 0 && r.stdout.trim()) { ghToken = r.stdout.trim(); break; }
+  }
+  return ghToken;
+}
+
+async function ghAsset(src: string, name: string): Promise<Response> {
+  const [, owner, repo] = GH_RE.exec(src)!;
+  const t = token();
+  const h: Record<string, string> = { "X-GitHub-Api-Version": "2022-11-28", ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+  const rel = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers: { ...h, Accept: "application/vnd.github+json" }, cache: "no-store" });
+  if (rel.status === 404) throw new Error(t ? "aucune release publiée sur le dépôt" : "dépôt privé inaccessible : connecter GitHub CLI sur ce poste (gh auth login)");
+  if (!rel.ok) throw new Error(`GitHub : HTTP ${rel.status}`);
+  const a = ((await rel.json()).assets ?? []).find((x: any) => x.name === name);
+  if (!a) throw new Error(`fichier ${name} absent de la dernière release`);
+  return fetch(a.url, { headers: { ...h, Accept: "application/octet-stream" }, cache: "no-store" });
+}
+
+async function remote(src: string, name: string): Promise<Response> {
+  return GH_RE.test(src) ? ghAsset(src, name) : fetch(join(src, name), { cache: "no-store" });
+}
+
 async function readText(src: string, name: string): Promise<string> {
-  if (!isUrl(src)) return fs.readFileSync(join(src, name), "utf-8");
-  const r = await fetch(join(src, name), { cache: "no-store" });
+  if (!isUrl(src) && !GH_RE.test(src)) return fs.readFileSync(join(src, name), "utf-8");
+  const r = await remote(src, name);
   if (!r.ok) throw new Error(`manifeste inaccessible (HTTP ${r.status})`);
   return r.text();
 }
@@ -101,8 +133,8 @@ export async function download(onProgress: (s: UpdateState) => void): Promise<Up
     out.write(chunk, (e) => (e ? rej(e) : res()));
   });
   try {
-    if (isUrl(src)) {
-      const r = await fetch(join(src, m.file), { cache: "no-store" });
+    if (isUrl(src) || GH_RE.test(src)) {
+      const r = await remote(src, m.file);
       if (!r.ok || !r.body) throw new Error(`téléchargement refusé (HTTP ${r.status})`);
       const reader = r.body.getReader();
       for (;;) { const { value, done } = await reader.read(); if (done) break; await write(value); }

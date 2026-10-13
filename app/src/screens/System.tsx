@@ -61,9 +61,10 @@ function UpdateCard() {
   }, () => "Installation lancée : QLab va se fermer puis redémarrer.");
   return (
     <Card title="Mises à jour de l'application">
-      <p className="muted">Source : dossier (local ou partage réseau) ou URL https contenant <code>latest.json</code> et l'installateur, produits par <code>scripts\build_installer.ps1 -Publish</code>. Vérification au démarrage ; téléchargement et installation uniquement sur action. Empreinte SHA-512 contrôlée avant toute exécution. Les données et l'historique ne sont pas touchés ; les migrations de base s'appliquent au redémarrage après sauvegarde automatique.</p>
+      <p className="muted">Source par défaut : les releases du dépôt GitHub QLab (dépôt privé : la session GitHub CLI de ce poste sert d'identification, aucun jeton n'est stocké). Autres sources possibles : dossier local ou URL https contenant <code>latest.json</code> et l'installateur. Vérification au démarrage ; téléchargement et installation uniquement sur action. Empreinte SHA-512 contrôlée avant toute exécution. Les données et l'historique ne sont pas touchés ; les migrations de base s'appliquent au redémarrage après sauvegarde automatique.</p>
       {u && <dl className="kv">
         <dt>Version installée</dt><dd>{u.current}</dd>
+        <dt>Source</dt><dd><code>{u.source}</code></dd>
         <dt>Dernière vérification</dt><dd>{u.checked_at ?? "—"}</dd>
         <dt>Disponible</dt><dd>{u.available ? `${u.available.version} (${fmt(u.available.size / 2 ** 20, 0)} Mo)${u.available.released_at ? ` — ${u.available.released_at}` : ""}` : "aucune"}</dd>
         {u.progress != null && <><dt>Téléchargement</dt><dd>{u.progress} %</dd></>}
@@ -72,10 +73,11 @@ function UpdateCard() {
       {u?.available?.notes && <pre className="json">{u.available.notes}</pre>}
       <Err msg={u?.error && !u?.busy ? u.error : null} />
       <div className="row">
-        <Field label="Source des mises à jour"><input value={src} placeholder="D:\QLab\updates ou https://…" onChange={(e) => setSrc(e.target.value)} /></Field>
+        <Field label="Source des mises à jour"><input value={src} placeholder="github:propriétaire/dépôt, D:\QLab\updates ou https://…" onChange={(e) => setSrc(e.target.value)} /></Field>
       </div>
       <div className="row">
         <Btn busy={a.busy} onClick={() => run("set-source", src, () => "Source enregistrée.")}>Enregistrer la source</Btn>
+        <Btn busy={a.busy} onClick={() => { setSrc(""); run("set-source", "", () => "Source : dépôt GitHub (par défaut)."); }}>Revenir au dépôt GitHub</Btn>
         <Btn busy={a.busy} disabled={!u?.source} onClick={() => run("check", undefined, (s) => s.available ? `Version ${s.available.version} disponible.` : "Application à jour.")}>Vérifier</Btn>
         <Btn busy={a.busy} disabled={!u?.available || !!u?.downloaded} onClick={() => run("download", undefined, () => "Installateur téléchargé et vérifié.")}>Télécharger</Btn>
         <Btn kind="primary" busy={a.busy} disabled={!u?.downloaded} onClick={install}>Installer et redémarrer</Btn>

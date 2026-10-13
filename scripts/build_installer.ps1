@@ -5,7 +5,9 @@
 #                          dans la source de mises à jour lue par l'application
 #   -Notes "..."           notes de version affichées dans l'application
 #   -NotesFile notes.txt   idem depuis un fichier UTF-8 (accents préservés, contrairement aux arguments de Windows PowerShell)
-param([string]$Version = "", [string]$Publish = "", [string]$Notes = "", [string]$NotesFile = "")
+#   -Release               pousse master et le tag vX.Y.Z sur GitHub (remote origin) et crée la release
+#                          (installateur + latest.json) : source de mises à jour par défaut de l'application
+param([string]$Version = "", [string]$Publish = "", [string]$Notes = "", [string]$NotesFile = "", [switch]$Release)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $build = "$root\app\build"
@@ -62,4 +64,23 @@ if ($Publish) {
     # manifeste en dernier : une vérification pendant la copie ne voit jamais un manifeste sans son fichier
     Copy-Item "$root\app\release-installer\latest.json" $Publish -Force
     Write-Host "Publié dans $Publish (version $ver)"
+}
+if ($Release) {
+    $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+    if (-not $gh) { $gh = "C:\Program Files\GitHub CLI\gh.exe" }
+    if (git -C $root status --porcelain -- app/package.json app/package-lock.json) {
+        git -C $root commit -q -m "Version $ver" -- app/package.json app/package-lock.json
+    }
+    if (git -C $root status --porcelain -- app engine scripts) { throw "modifications non committées : committer avant de publier une release" }
+    git -C $root tag -f "v$ver"
+    git -C $root push origin master "refs/tags/v$ver"
+    if ($LASTEXITCODE -ne 0) { throw "push GitHub échoué" }
+    $nf = "$root\app\release-installer\notes.txt"
+    [IO.File]::WriteAllText($nf, ($(if ($Notes) { $Notes } else { "QLab $ver" })), (New-Object Text.UTF8Encoding $false))
+    Push-Location $root
+    & $gh release create "v$ver" $exe.FullName "$root\app\release-installer\latest.json" --title "QLab $ver" --notes-file $nf --latest
+    $ok = $LASTEXITCODE
+    Pop-Location
+    if ($ok -ne 0) { throw "création de la release GitHub échouée" }
+    Write-Host "Release GitHub v$ver publiée"
 }
