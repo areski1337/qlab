@@ -73,6 +73,18 @@ def health(lab=Depends(L)):
             "live_trading": "désactivé (non disponible dans cette version)"}
 
 
+@app.get(f"{API}/stats")
+def stats(lab=Depends(L)):
+    by = {r[0]: r[1] for r in lab.con.execute("SELECT status, COUNT(*) FROM genome_revisions GROUP BY status")}
+    alerts = [f"Tâche {r['kind']} en échec : {r['error']}" for r in lab.con.execute(
+        "SELECT kind, error FROM tasks WHERE state='failed' AND updated_at > datetime('now','-1 day') ORDER BY updated_at DESC LIMIT 5")]
+    alerts += [f"Parité MT5 critique ({r['id']}) : divergence non expliquée" for r in lab.con.execute(
+        "SELECT id FROM parity_runs WHERE critical=1 ORDER BY created_at DESC LIMIT 5")]
+    return {"revisions_by_status": by, "alerts": alerts,
+            "evaluations": lab.con.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0],
+            "datasets": lab.con.execute("SELECT COUNT(*) FROM dataset_versions").fetchone()[0]}
+
+
 @app.get(f"{API}/mt5/status")
 def mt5_status(lab=Depends(L)):
     from ..data.mt5_source import status

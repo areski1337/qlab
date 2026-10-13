@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
     "workers": 4,
     "initial_equity": 10_000.0,
     "stagnation_generations": 5,
+    "exportable_only": True,  # pénalise (contrainte) les génomes non exportables en MQL5, sans les interdire
 }
 
 
@@ -73,8 +74,12 @@ def objectives(tribe: str, m: dict, novelty: float = 0.0, val: dict | None = Non
     raise ValueError(tribe)
 
 
-def violation(m: dict, c: dict, g: dict | None = None, special: str | None = None) -> float:
+def violation(m: dict, c: dict, g: dict | None = None, special: str | None = None,
+              exportable_only: bool = False) -> float:
     v = 0.0
+    if exportable_only and g is not None:
+        from ..mql5.generator import SUPPORTED
+        v += sum(1.0 for r in model.refs(g) if r["feature"] not in SUPPORTED)
     n = m["n_trades"]
     if n < c["min_trades"]:
         v += (c["min_trades"] - n) / c["min_trades"]
@@ -311,7 +316,7 @@ class Campaign:
         for r, m, v in zip(revs, ms, vs):
             nov = novelty(behavior(m), beh_arch) if tribe == "exploration" else 0.0
             objs.append(objectives(tribe, m, nov, v))
-            viol = violation(m, self.cfg["constraints"], r["content"], sp)
+            viol = violation(m, self.cfg["constraints"], r["content"], sp, self.cfg.get("exportable_only", False))
             if v is not None:
                 viol += violation(v, {**self.cfg["constraints"],
                                       "min_trades": max(5, self.cfg["constraints"]["min_trades"] // 3)})
