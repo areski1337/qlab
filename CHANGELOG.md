@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des composants : `engine/src/qlab/core/versions.py`.
 
+## [Non publié]
+### Ajouté
+- Mises à jour de l'application : source configurable (dossier local, partage réseau ou URL https) contenant `latest.json` et l'installateur ; vérification au démarrage, téléchargement et installation uniquement sur action de l'utilisateur, empreinte SHA-512 et taille contrôlées avant exécution, installation NSIS silencieuse puis redémarrage ; tâches en cours signalées avant installation (reprises en pause au redémarrage).
+- `scripts/build_installer.ps1 -Version x.y.z -Publish <dossier> -Notes "…"` : fixe la version, génère `latest.json` et publie.
+
 ## [0.1.0] — 2026-10-13 (bêta)
 ### Ajouté
 - Fondations : SQLite (WAL) avec migrations à checksum et sauvegarde préalable, artefacts adressés par SHA-256, file de tâches persistante à états contrôlés, checkpoints atomiques, journaux JSON UTC sans secrets, audit, sauvegarde/restauration vérifiée.

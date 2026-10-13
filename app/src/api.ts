@@ -7,6 +7,7 @@ declare global {
       onEvent: (cb: (ev: any) => void) => () => void;
       revealExport: (p: string) => Promise<boolean>;
       engineLog: () => Promise<string>;
+      update: (op: "status" | "check" | "set-source" | "download" | "install", arg?: string) => Promise<any>;
     };
   }
 }

@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld("qlab", {
   },
   revealExport: (p: string) => ipcRenderer.invoke("qlab:reveal-export", p),
   engineLog: () => ipcRenderer.invoke("qlab:engine-log"),
+  update: (op: "status" | "check" | "set-source" | "download" | "install", arg?: string) =>
+    ipcRenderer.invoke("qlab:update", op, arg),
 });

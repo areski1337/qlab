@@ -5,6 +5,11 @@ $root = Split-Path -Parent $PSScriptRoot
 $build = "$root\app\build"
 $py = "$build\python"
 
+if ($Version) {
+    if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "version invalide : $Version (x.y.z attendu)" }
+    Push-Location "$root\app"; npm version $Version --no-git-tag-version --allow-same-version | Out-Null; Pop-Location
+}
+
 Write-Host "1/4 Python standalone (python-build-standalone via uv)"
 uv python install 3.13 | Out-Null
 # Recherche hors du projet : dans engine\, uv renverrait le venv du projet (Scripts\) au lieu de l'installation autonome.

@@ -39,3 +39,20 @@ Tableau de bord, ou `GET /api/v1/health` : intégrité SQLite, schéma, disque l
 
 ## Désinstallation
 Supprimer le dossier du projet. Les données restent dans `%LOCALAPPDATA%\QLab` (à supprimer manuellement si souhaité, après sauvegarde). Les EA copiés restent dans `MQL5\Experts\QLab\` du terminal.
+
+## Mises à jour
+
+1. Construire et publier une nouvelle version :
+   `powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -Version 0.2.0 -Publish D:\QLab\updates -Notes "…"`
+   Le dossier reçoit `QLab Setup 0.2.0.exe` puis `latest.json` (version, fichier, taille, SHA-512, date, notes).
+   Pour une source https, servir ce dossier tel quel (http non chiffré refusé).
+2. Dans QLab : Paramètres → « Mises à jour de l'application » → saisir la source (ou variable d'environnement
+   `QLAB_UPDATE_SOURCE`, prioritaire) → Vérifier → Télécharger → Installer et redémarrer.
+3. QLab vérifie la source 15 s après le démarrage et affiche « Mise à jour x.y.z disponible » dans la barre
+   d'état ; rien n'est téléchargé ni installé sans action.
+
+Garanties : l'installateur n'est exécuté que si sa taille et son SHA-512 correspondent au manifeste ; les données
+(`%APPDATA%\QLab` et le répertoire de données) ne sont pas touchées ; les migrations de base s'appliquent au
+redémarrage du moteur après sauvegarde automatique ; les tâches en cours repassent en pause et se reprennent.
+Limite : sans signature de code, l'authenticité repose sur la confiance dans la source (dossier maîtrisé ou https).
+

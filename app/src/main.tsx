@@ -31,10 +31,12 @@ const SCREENS: [string, string, React.FC][] = [
 
 function App() {
   const [nav, setNav] = useState<Nav>({ screen: "dash" });
+  const [upd, setUpd] = useState<string | null>(null);
   const [engine, setEngine] = useState<{ state: string; detail?: string }>({ state: "démarrage du moteur…" });
   useEffect(() => window.qlab.onEvent((ev) => {
     if (ev.type === "engine.ready") setEngine({ state: "moteur prêt" });
     if (ev.type === "engine.failed") setEngine({ state: "moteur en échec", detail: ev.error });
+    if (ev.type === "update.available") setUpd(ev.version);
     if (ev.type === "engine.exited") setEngine({ state: "moteur arrêté", detail: `code ${ev.code}` });
   }), []);
   useEffect(() => { window.qlab.request("GET", "/api/v1/health").then((r) => r.status === 200 && setEngine({ state: "moteur prêt" })); }, []);
@@ -46,6 +48,7 @@ function App() {
           <span className="env">RECHERCHE / SIMULATION</span>
           <span className="real-off">Trading réel : désactivé</span>
           <span className="grow" />
+          {upd && <button className="btn" onClick={() => setNav({ screen: "settings" })}>Mise à jour {upd} disponible</button>}
           <span className={engine.state === "moteur prêt" ? "muted" : "real-off"}>{engine.state}</span>
           {engine.detail && <span className="muted" title={engine.detail}>ⓘ</span>}
         </div>

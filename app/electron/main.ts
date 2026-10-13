@@ -6,6 +6,7 @@ import { spawn, spawnSync, ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import * as updater from "./updater";
 
 const TOKEN = randomBytes(32).toString("hex");
 let port = 0;
@@ -163,11 +164,33 @@ app.whenReady().then(async () => {
     return true;
   });
   ipcMain.handle("qlab:engine-log", async () => engineLog.join("").slice(-4000));
+  // Mises à jour : même contrôle d'origine que l'API ; l'installation exige un fichier vérifié (SHA-512).
+  ipcMain.handle("qlab:update", async (e, op: unknown, arg: unknown) => {
+    if (!e.senderFrame?.url.startsWith("app://bundle/")) throw new Error("origine refusée");
+    if (op === "status") return updater.status();
+    if (op === "check") return updater.check();
+    if (op === "set-source" && typeof arg === "string" && arg.length < 1024) return updater.setSource(arg);
+    if (op === "download") return updater.download((s) => win?.webContents.send("qlab:event", { type: "update.progress", ...s }));
+    if (op === "install") {
+      const t = await apiRequest("GET", "/api/v1/tasks");
+      const busy = Array.isArray(t.data) ? t.data.filter((x: any) => x.state === "running" || x.state === "validating").length : 0;
+      if (busy && arg !== "force") return { ...updater.status(), error: `${busy} tâche(s) en cours : elles seront mises en pause puis reprises au redémarrage. Confirmer pour installer quand même.`, busy };
+      updater.install();
+      setTimeout(() => app.quit(), 500);
+      return updater.status();
+    }
+    throw new Error("opération refusée");
+  });
   createWindow();
   try {
     await startEngine();
     win?.webContents.send("qlab:event", { type: "engine.ready", ts: new Date().toISOString() });
     pumpEvents();
+    // Vérification automatique au démarrage (source configurée uniquement) ; rien n'est téléchargé sans action.
+    setTimeout(async () => {
+      const s = await updater.check();
+      if (s.available) win?.webContents.send("qlab:event", { type: "update.available", version: s.available.version, ts: new Date().toISOString() });
+    }, 15_000);
     if (SNAP_DIR) setTimeout(() => snapshots(SNAP_DIR), 3000);
   } catch (err) {
     win?.webContents.send("qlab:event", { type: "engine.failed", error: String(err), ts: new Date().toISOString() });
