@@ -111,3 +111,9 @@ def export(lab, task):
 def backup(lab, task):
     from ..storage.backup import create_backup
     return {"path": str(create_backup(lab.con, lab.paths))}
+
+
+@handler("demo_observe")
+def demo_observe(lab, task):
+    from ..demo import monitor
+    return monitor.observe(lab, task["payload"]["deployment_id"])

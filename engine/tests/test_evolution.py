@@ -27,7 +27,7 @@ def import_synth(lab, n=12000, seed=5):
 
 def small_cfg(dsv, **kw):
     return {"dataset_version_id": dsv, "population": 8, "generations_per_tribe": 2, "merge_generations": 1,
-            "tribes": ["consistency", "exploration"], "workers": 0, "seed": 3,
+            "tribes": ["consistency", "exploration", "specialization"], "workers": 0, "seed": 3,
             "constraints": {"min_trades": 5, "max_dd_pct": 60.0, "max_ambiguous_ratio": 0.5},
             "cost_profile": {**DEFAULT_COST_PROFILE, "fixed_spread_points": 30}, **kw}
 
@@ -95,6 +95,13 @@ def run_campaign(lab, cfg):
     cid, tid = campaign.create(lab, cfg)
     t = runner.run_next(lab)
     return cid, tid, t
+
+
+def test_specialize_creates_unique_ids():
+    rng = random.Random(5)
+    for _ in range(30):
+        g = campaign.specialize(ops.random_genome(rng, "X", "M5", "both"), "london_kz")
+        assert model.validate(g) == [] and campaign.has_session(g, "london_kz")
 
 
 def test_campaign_end_to_end_and_deterministic(tmp_path):

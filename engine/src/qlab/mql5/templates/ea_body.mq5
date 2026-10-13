@@ -6,6 +6,7 @@
 
 input bool   InpTrace = true;     // trace de diagnostic (fichier commun QLab/<run>.csv)
 input string InpRunId = "";       // identifiant de run (parité)
+input double InpRiskScale = 1.0;  // montée progressive du risque (0..1) : ne peut que RÉDUIRE le risque compilé
 
 CTrade   g_trade;
 datetime g_last_bar = 0;
@@ -214,6 +215,9 @@ void OnTick()
    long day = QL_TradingDay(QL_ServerToUTC((long)bt));
    if(day != g_cnt_day) { g_cnt_day = day; g_cnt = 0; }
    if(g_cnt >= QL_GEN_MAX_TRADES_PER_DAY) { QL_Trace("SKIP;max_trades_per_day"); return; }
+   // Arrêt d'urgence global / suspension de cette stratégie : plus aucune entrée (positions existantes conservées).
+   if(FileIsExist("QLab\\EMERGENCY_STOP", FILE_COMMON)) { QL_Trace("SKIP;emergency_stop"); return; }
+   if(FileIsExist("QLab\\suspend_" + IntegerToString(QL_GEN_MAGIC) + ".flag", FILE_COMMON)) { QL_Trace("SKIP;suspended"); return; }
 
    MqlTick tk;
    if(!SymbolInfoTick(_Symbol, tk)) return;
@@ -226,7 +230,7 @@ void OnTick()
 
    double tv = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE), ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    double vpu = tv / ts;
-   double risk_pct = MathMin(QL_GEN_RISK_PCT, QL_LIM_MAX_RISK_PCT);
+   double risk_pct = MathMin(QL_GEN_RISK_PCT, QL_LIM_MAX_RISK_PCT) * MathMax(0.0, MathMin(1.0, InpRiskScale));
    double raw_lots = AccountInfoDouble(ACCOUNT_BALANCE) * risk_pct / 100.0 / (dist * vpu);
    double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP), vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double vmax = MathMin(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX), QL_LIM_MAX_LOTS);
@@ -236,6 +240,12 @@ void OnTick()
    string why = QL_RiskCheck(day, lots, (double)(tk.ask - tk.bid) / pt);
    if(why != "") { QL_Trace("SKIP;risk:" + why); return; }
 
+   // Verrou : un seul robot QLab ouvre une position sur ce symbole à une bougie donnée.
+   string lock = "QLAB_LOCK_" + _Symbol;
+   double prev_lock = GlobalVariableCheck(lock) ? GlobalVariableGet(lock) : 0.0;
+   if(prev_lock == (double)bt) { QL_Trace("SKIP;concurrent_lock"); return; }
+   if(GlobalVariableCheck(lock) ? !GlobalVariableSetOnCondition(lock, (double)bt, prev_lock) : GlobalVariableSet(lock, (double)bt) == 0)
+   { QL_Trace("SKIP;concurrent_lock"); return; }
    bool ok = d == 1 ? g_trade.Buy(lots, _Symbol, 0.0, NormalizeDouble(sl, _Digits), QL_OK(tp) ? NormalizeDouble(tp, _Digits) : 0.0, "qlab")
                     : g_trade.Sell(lots, _Symbol, 0.0, NormalizeDouble(sl, _Digits), QL_OK(tp) ? NormalizeDouble(tp, _Digits) : 0.0, "qlab");
    if(!ok) { QL_Trace("ORDERFAIL;" + IntegerToString((int)g_trade.ResultRetcode())); return; }

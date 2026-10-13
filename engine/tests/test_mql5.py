@@ -46,7 +46,10 @@ def test_generation_deterministic_and_traceable():  # AT-014
     assert rev["semantic_hash"] in src and "rev_test" in src and LIM_SHA in src
     assert f"qlab.mql5_generator {generator.GENERATOR_VERSION}" in src
     assert "ACCOUNT_TRADE_MODE_REAL" in src  # refus du compte réel codé en dur
-    assert "input double" not in src and "input int" not in src  # aucune limite exposée en input
+    # aucune limite exposée en input ; le seul input numérique ne peut que réduire le risque (borné à [0,1])
+    inputs = [l for l in src.splitlines() if l.startswith("input ")]
+    assert [l.split("=")[0].split()[-1] for l in inputs] == ["InpTrace", "InpRunId", "InpRiskScale"]
+    assert "MathMax(0.0, MathMin(1.0, InpRiskScale))" in src
 
 
 def test_unsupported_feature_blocks_export():

@@ -399,6 +399,109 @@ def campaign_candidates(cid: str, segment: str = "train", limit: int = 500, lab=
     return rs
 
 
+# ---------------------------------------------------------------- portefeuilles
+class PortfolioIn(BaseModel):
+    name: str = "Portefeuille"
+    revision_ids: list[str]
+    method: str = "min_corr"
+    segment: str = "research"
+    w_min: float = Field(0.05, ge=0, le=1)
+    w_max: float = Field(0.5, gt=0, le=1)
+
+
+@app.post(f"{API}/portfolios")
+def create_portfolio(body: PortfolioIn, lab=Depends(L)):
+    from ..portfolio import service
+    if body.segment == "final":
+        raise HTTPException(403, "le holdout final n'est pas utilisable pour construire un portefeuille")
+    try:
+        return service.build(lab, body.name, body.revision_ids, body.method, body.segment, body.w_min, body.w_max)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get(f"{API}/portfolios")
+def portfolios(lab=Depends(L)):
+    out = rows(lab.con.execute("SELECT * FROM portfolios ORDER BY created_at DESC"))
+    for p in out:
+        p["allocations"] = rows(lab.con.execute("SELECT revision_id, weight FROM portfolio_allocations WHERE portfolio_id=?", (p["id"],)))
+    return out
+
+
+@app.get(f"{API}/portfolios/{{pid}}")
+def portfolio(pid: str, lab=Depends(L)):
+    r = lab.con.execute("SELECT * FROM portfolios WHERE id=?", (pid,)).fetchone()
+    if not r:
+        raise HTTPException(404, "portefeuille inconnu")
+    return {**dict(r), "report": lab.store.get_json(r["report_artifact"])}
+
+
+# ---------------------------------------------------------------- démo (lecture seule)
+@app.get(f"{API}/demo")
+def demo_list(lab=Depends(L)):
+    from ..demo.monitor import flag_path
+    out = rows(lab.con.execute("SELECT * FROM demo_deployments ORDER BY started_at DESC"))
+    for d in out:
+        last = lab.con.execute("SELECT observed_at, report_json FROM demo_observations WHERE deployment_id=? "
+                               "ORDER BY observed_at DESC LIMIT 1", (d["id"],)).fetchone()
+        d["last_observation"] = {"at": last[0], **json.loads(last[1])} if last else None
+    try:
+        emergency = flag_path(lab).exists()
+    except FileNotFoundError:
+        emergency = None
+    return {"deployments": out, "emergency_stop": emergency,
+            "news_filter": "inactif : aucun calendrier économique disponible dans cette version",
+            "weekend_close": "non implémenté"}
+
+
+class DemoReg(BaseModel):
+    revision_id: str
+
+
+@app.post(f"{API}/demo/register")
+def demo_register(body: DemoReg, lab=Depends(L)):
+    from ..demo import monitor
+    try:
+        return monitor.register(lab, body.revision_id)
+    except PermissionError as e:
+        raise HTTPException(409, str(e))
+
+
+class Flag(BaseModel):
+    on: bool
+    reason: str = "manuel"
+
+
+@app.post(f"{API}/demo/emergency-stop")
+def emergency(body: Flag, lab=Depends(L)):
+    from ..demo import monitor
+    try:
+        return monitor.set_flag(lab, None, body.on, body.reason)
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+
+
+@app.post(f"{API}/demo/{{did}}/{{action}}")
+def demo_action(did: str, action: str, body: Flag | None = None, lab=Depends(L)):
+    from ..demo import monitor
+    dep = lab.con.execute("SELECT * FROM demo_deployments WHERE id=?", (did,)).fetchone()
+    if not dep:
+        raise HTTPException(404, "déploiement inconnu")
+    if action == "observe":
+        return submit(lab, "demo_observe", {"deployment_id": did})
+    if action == "promote":
+        try:
+            return monitor.promote_stage(lab, did)
+        except PermissionError as e:
+            raise HTTPException(409, str(e))
+    if action == "suspend":
+        try:
+            return monitor.set_flag(lab, dep["magic"], body.on if body else True, body.reason if body else "manuel")
+        except FileNotFoundError as e:
+            raise HTTPException(503, str(e))
+    raise HTTPException(400, "action inconnue")
+
+
 # ---------------------------------------------------------------- sauvegardes
 @app.post(f"{API}/backups")
 def backup_now(lab=Depends(L)):

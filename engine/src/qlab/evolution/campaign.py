@@ -12,6 +12,7 @@ après un crash réutilise les évaluations existantes (AT-004).
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
 import random
@@ -390,7 +391,7 @@ def specialize(g: dict, session: str) -> dict:
     leaf = {"id": "n0", "op": "event", "ref": {"feature": "session", "params": {"name": session}, "output": "active"}}
     for s in ("long", "short"):
         if g["entry"][s] is not None and not has_session({"entry": {"long": g["entry"][s], "short": None}}, session):
-            g["entry"][s] = {"id": "n0", "op": "and", "children": [leaf, g["entry"][s]]}
+            g["entry"][s] = {"id": "n0", "op": "and", "children": [copy.deepcopy(leaf), g["entry"][s]]}
     return model.renumber(g)
 
 

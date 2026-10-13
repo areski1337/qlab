@@ -23,7 +23,7 @@ COMPONENT_VERSIONS: dict[str, str] = {
     "validation_protocol": "1.0",
     "evolution_operators": "1.0",
     "nsga2": "1.0",
-    "mql5_generator": "1.0",
+    "mql5_generator": "1.1",  # 1.1 : InpRiskScale, verrou inter-robots, suspension/arrêt d'urgence
     "parity": "1.0",
     "risk_controller": "1.0",
     "portfolio": "1.0",

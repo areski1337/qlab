@@ -8,3 +8,4 @@ out/
 release/
 var/
 *.ex5
+dist-electron/
