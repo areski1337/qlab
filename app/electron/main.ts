@@ -2,7 +2,7 @@
 // Le renderer n'a ni Node ni accès réseau direct : il ne peut appeler que les chemins /api/v1 autorisés.
 import { app, BrowserWindow, ipcMain, Menu, net, protocol, shell, session } from "electron";
 import { pathToFileURL } from "node:url";
-import { spawn, ChildProcess } from "node:child_process";
+import { spawn, spawnSync, ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -167,8 +167,15 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on("window-all-closed", () => {
+// Arrête tout l'arbre du moteur (uv → python → python) : tuer uv seul laisserait des processus orphelins.
+function stopEngine() {
   sseAbort?.abort();
-  engine?.kill();
+  if (engine?.pid && engine.exitCode === null) {
+    spawnSync("taskkill", ["/PID", String(engine.pid), "/T", "/F"], { windowsHide: true });
+  }
+}
+app.on("will-quit", stopEngine);
+app.on("window-all-closed", () => {
+  stopEngine();
   app.quit();
 });

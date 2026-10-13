@@ -201,6 +201,9 @@ def generate(rev: dict, symbol: str, tz_profile: str, limits: dict, limits_sha: 
         "QL_LIM_MAX_LOTS": repr(float(limits["max_lots"])),
         "QL_LIM_MAX_ORDERS_PER_DAY": str(int(limits["max_orders_per_day"])),
         "QL_LIM_MAX_SPREAD_POINTS": repr(float(limits["max_spread_points"] or 0)),
+        "QL_LIM_DAILY_PROFIT_TARGET_PCT": repr(float(limits.get("daily_profit_target_pct") or 0)),
+        "QL_LIM_WEEKEND_MIN": repr(float(limits.get("close_before_weekend_minutes") or 0)),
+        "QL_LIM_NEWS_ENABLED": "true" if (limits.get("news_filter") or {}).get("enabled") else "false",
     }
     desc = model.describe(g)
     header = [

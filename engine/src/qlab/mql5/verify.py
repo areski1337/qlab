@@ -40,6 +40,11 @@ def verify(lab, rev_id: str, cache, risk, limits: dict, tz_profile: str, from_da
         record("blocked", {}, diag=f"compilation {comp['status']} : {comp['diagnostic']}")
         out["parity"] = {"status": "blocked", "diagnostic": comp["diagnostic"]}
         return out
+    if getattr(cache, "news", None) is not None:  # le testeur lit le même fichier d'annonces que l'EA en démo
+        from ..calendar.store import write_ea_file
+        dp = toolchain.data_path(lab.settings)
+        if dp is not None:
+            write_ea_file(dp.parent / "Common" / "Files" / "QLab" / f"news_{symbol}.csv", cache.news, True)
     t = toolchain.run_tester(lab, ea, pid, symbol, rev["content"]["market"]["timeframe"], from_date, to_date,
                              deposit, model=model)
     if t["status"] != "completed":

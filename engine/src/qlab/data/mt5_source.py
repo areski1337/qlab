@@ -52,6 +52,10 @@ def mt5_session(terminal_path: str | None = None, timeout_ms: int = 60000):
         if not was_running:
             import subprocess
             subprocess.run(["taskkill", "/IM", "terminal64.exe"], capture_output=True)  # sans /F : fermeture propre
+            for _ in range(60):  # attendre la sortie effective : sinon une session suivante le croirait « ouvert par l'utilisateur »
+                if not _terminal_running():
+                    break
+                time.sleep(0.5)
 
 
 def status(terminal_path: str | None = None) -> dict:

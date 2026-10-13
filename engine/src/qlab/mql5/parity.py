@@ -88,7 +88,9 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
              "provenance": {**costs_base.get("provenance", {}), "commission": "observed_mt5_tester",
                             "spread": "bars" if floor == 0 else "bars+median_floor",
                             "slippage": "0 : testeur ExecutionMode=0 (sans latence)"}}
-    res = engine.run(rev["content"], cache, costs, risk, initial_equity=deposit, start=i0, stop=min(i1 + 1, len(b)))
+    # Conditions du testeur : chemin OHLC M1 de MT5 (si M1 en contexte) et stop rempli au prix sur gap.
+    res = engine.run(rev["content"], cache, costs, risk, initial_equity=deposit, start=i0, stop=min(i1 + 1, len(b)),
+                     execution=engine.TESTER_EXECUTION)
     from ..genome.model import signals
     lg, sh = signals(rev["content"], cache)
 
@@ -175,7 +177,8 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
         "aggregate": {"net_ref": net_ref, "net_mt5": net_mt5, "net_rel_diff": net_diff,
                       "ref_metrics": {k: v for k, v in compute(res).items() if k in ("n_trades", "profit_factor",
                                                                                       "max_dd_pct", "sharpe")}},
-        "reference_costs": costs,
+        "reference_costs": costs, "reference_execution": engine.TESTER_EXECUTION,
+        "m1_context": "M1" in cache.context,
         "costs_observed": {"commission_per_lot_side": comm_side, "commission_total": comm,
                            "swap_total": sum(t["out"]["swap"] for t in tr["trades"])},
         "ea_skips": tr["skips"], "nohist_bars": tr["nohist"],

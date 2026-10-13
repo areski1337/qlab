@@ -63,6 +63,15 @@ long QL_ServerToUTC(const long s)
    if(QL_US_DST(s - 3 * 3600)) return s - 3 * 3600;
    return s - 2 * 3600;
 }
+// Minutes jusqu'à la clôture hebdomadaire (vendredi 17:00 New York) — miroir de minutes_to_weekly_close.
+double QL_MinToWeeklyClose(const long u)
+{
+   long loc = u + QL_NYOffset(u);
+   int wd = (QL_DOW(loc) + 6) % 7;                 // 0 = lundi
+   double mins = (double)(((loc % 86400) + 86400) % 86400) / 60.0;
+   double out = ((4 - wd + 7) % 7) * 1440.0 + (1020.0 - mins);
+   return out <= 0 ? out + 10080.0 : out;
+}
 long QL_TradingDay(const long u)  { long x = u + QL_NYOffset(u) + 7 * 3600; return (long)MathFloor((double)x / 86400.0); }
 long QL_TradingWeek(const long u) { return (long)MathFloor((double)(QL_TradingDay(u) + 3) / 7.0); }
 

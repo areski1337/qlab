@@ -129,13 +129,15 @@ def novelty(b: np.ndarray, others: list[np.ndarray], k: int = 5) -> float:
 _W: dict = {}
 
 
-def _init_worker(root, dsv, ctx_ids, costs, limits):
+def _init_worker(root, dsv, ctx_ids, costs, limits, news=None):
     from ..lab import Lab
     lab = Lab.open(root)
     bars = load_bars(lab, dsv)
     ctx = {tf: load_bars(lab, vid) for tf, vid in ctx_ids.items()}
     lab.close()
-    _W.update(cache=FeatureCache(bars, ctx), costs=costs, risk=RiskController(limits))
+    cache = FeatureCache(bars, ctx)
+    cache.news = news
+    _W.update(cache=cache, costs=costs, risk=RiskController(limits))
 
 
 def _eval(content: dict, window) -> dict:
@@ -153,6 +155,8 @@ class Campaign:
         self.bars = load_bars(lab, config["dataset_version_id"])
         self.ctx = {tf: load_bars(lab, vid) for tf, vid in config["context_version_ids"].items()}
         self.cache = FeatureCache(self.bars, self.ctx)
+        from ..calendar.store import windows_for
+        self.cache.news = windows_for(lab, self.bars.spec, self.limits)
         seg = proto.segments(len(self.bars), config["protocol"])
         self.windows = {"train": seg["train"], "validation": seg["validation"]}
         self.symbol, self.tf = self.bars.symbol, self.bars.timeframe
@@ -224,7 +228,7 @@ class Campaign:
         workers = max(0, int(self.cfg["workers"]))
         pool = ProcessPoolExecutor(workers, initializer=_init_worker, initargs=(
             str(lab.paths.root), self.cfg["dataset_version_id"], self.cfg["context_version_ids"],
-            self.cfg["cost_profile"], self.limits)) if workers > 0 else None
+            self.cfg["cost_profile"], self.limits, self.cache.news)) if workers > 0 else None
         try:
             while True:
                 state = queue.get(lab.con, self.task_id)["state"]

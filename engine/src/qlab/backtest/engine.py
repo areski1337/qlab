@@ -30,15 +30,56 @@ from ..core.versions import COMPONENT_VERSIONS
 from ..features import FeatureCache
 from ..features.classic import atr_arr
 from ..features.ict import pivots
-from ..features.sessions import trading_day
+from ..features.sessions import minutes_to_weekly_close, trading_day
 from ..genome.model import semantic_hash, signals
 from ..risk.controller import RiskController, RiskState
 from .costs import spread_series, value_per_price_unit
 
 
+# Profil d'exécution (inclus dans les clés de cache). Recherche : prudent. Parité : conditions du testeur.
+DEFAULT_EXECUTION = {
+    "intrabar": "m1_if_available",  # barres ambiguës résolues par les M1 du contexte si présentes
+    "m1_path": "conservative",       # ambiguïté résiduelle dans une M1 : stop | "mt5_ohlc" (O-L-H-C / O-H-L-C)
+    "gap_fill": "open",              # stop franchi par un gap : ouverture (prudent) | "stop_price" (testeur MT5)
+}
+TESTER_EXECUTION = {"intrabar": "m1_if_available", "m1_path": "mt5_ohlc", "gap_fill": "stop_price"}
+
+
+def _resolve_m1(m1, t0: int, t1: int, d: int, sl: float, tp: float | None, sp_fallback: float, pt: float,
+                path_mode: str, gap_fill: str, slip: float):
+    """Parcourt les M1 de [t0, t1) pour départager stop/objectif. Retourne (prix, motif, ambigu) ou None."""
+    a, z = int(np.searchsorted(m1.ts, t0)), int(np.searchsorted(m1.ts, t1))
+    for q in range(a, z):
+        sp = (m1.spread[q] if m1.spread[q] > 0 else sp_fallback) * pt if d == -1 else 0.0
+        o, h, l, c = m1.open[q] + sp, m1.high[q] + sp, m1.low[q] + sp, m1.close[q] + sp
+        if q > a:
+            if (o - sl) * d <= 0:
+                return (sl if gap_fill == "stop_price" else o) - d * slip, "stop_gap", False
+            if tp is not None and (o - tp) * d >= 0:
+                return o, "target_gap", False
+        adverse, favorable = (l, h) if d == 1 else (h, l)
+        hs = (adverse - sl) * d <= 0
+        ht = tp is not None and (favorable - tp) * d >= 0
+        if hs and ht:
+            if path_mode != "mt5_ohlc":
+                return sl - d * slip, "stop", True
+            for p in ((l, h, c) if m1.close[q] > m1.open[q] else (h, l, c)):
+                if (p - sl) * d <= 0:
+                    return sl - d * slip, "stop", False
+                if (p - tp) * d >= 0:
+                    return tp, "target", False
+            return sl - d * slip, "stop", True
+        if hs:
+            return sl - d * slip, "stop", False
+        if ht:
+            return tp, "target", False
+    return None
+
+
 def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskController,
         initial_equity: float = 10_000.0, start: int = 0, stop: int | None = None,
-        signals_override: tuple[np.ndarray, np.ndarray] | None = None) -> dict:
+        signals_override: tuple[np.ndarray, np.ndarray] | None = None,
+        execution: dict | None = None, news=None) -> dict:
     """Backtest sur les barres [start, stop). Les features sont calculées sur toute la série
     disponible jusqu'à `stop` exclusivement côté décision (les entrées n'ont lieu que dans la fenêtre)."""
     b = cache.bars
@@ -53,6 +94,14 @@ def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskControl
     # signals_override : entrées imposées (baselines aléatoires), mêmes règles de sortie et de risque.
     long_sig, short_sig = signals_override if signals_override is not None else signals(genome, cache)
     days = trading_day(b.ts)
+    exe = {**DEFAULT_EXECUTION, **(execution or {})}
+    news = news if news is not None else getattr(cache, "news", None)
+    m1 = cache.context.get("M1") if exe["intrabar"] == "m1_if_available" and b.timeframe != "M1" else None
+    wk_min = risk.limits.get("close_before_weekend_minutes")
+    mtc_open = minutes_to_weekly_close(b.ts) if wk_min else None
+    mtc_close = minutes_to_weekly_close(b.ts + b.tf_s) if wk_min else None
+    nf = risk.limits.get("news_filter") or {}
+    resolved_m1 = 0
 
     st_cfg = ex["stop"]
     if st_cfg["type"] == "atr":
@@ -100,6 +149,16 @@ def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskControl
         if day_count[days[e]] >= mg["max_trades_per_day"]:
             skipped["max_trades_per_day"] += 1
             continue
+        if wk_min and mtc_open[e] <= wk_min:
+            skipped["risk:weekend_window"] += 1
+            continue
+        if nf.get("enabled"):
+            if news is None or not news.covered(int(b.ts[e])):
+                skipped["risk:news_data_unavailable"] += 1  # filtre actif mais non vérifiable : refus
+                continue
+            if news.blocked_at(int(b.ts[e])):
+                skipped["risk:news_window"] += 1
+                continue
 
         entry = O[e] + (spread[e] * pt if d == 1 else 0.0) + d * slip
         if st_cfg["type"] == "atr":
@@ -159,7 +218,8 @@ def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskControl
                     exit_px, exit_reason = op_px - d * slip, "time_stop"
                     break
                 if (op_px - sl) * d <= 0:
-                    exit_px, exit_reason = op_px - d * slip, "stop_gap"
+                    exit_px = (sl if exe["gap_fill"] == "stop_price" else op_px) - d * slip
+                    exit_reason = "stop_gap"
                     break
                 if tp is not None and (op_px - tp) * d >= 0:
                     exit_px, exit_reason = op_px, "target_gap"
@@ -169,6 +229,13 @@ def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskControl
             mfe = max(mfe, (favorable - entry) * d / dist)
             hit_sl = (adverse - sl) * d <= 0
             hit_tp = tp is not None and (favorable - tp) * d >= 0
+            if hit_sl and hit_tp and m1 is not None:
+                r = _resolve_m1(m1, int(b.ts[j]), int(b.ts[j]) + b.tf_s, d, sl, tp, float(spread[j]), pt,
+                                exe["m1_path"], exe["gap_fill"], slip)
+                if r is not None:
+                    exit_px, exit_reason, ambiguous = r
+                    resolved_m1 += 1
+                    break
             if hit_sl:
                 ambiguous = hit_tp
                 exit_px, exit_reason = sl - d * slip, "stop"
@@ -186,14 +253,15 @@ def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskControl
                 cand = close_px - d * tr["mult"] * tr_atr[j]
                 if (cand - sl) * d > 0:
                     sl = cand
-            if ex["exit_on_opposite"] and ((d == 1 and short_sig[j]) or (d == -1 and long_sig[j])):
+            weekend = bool(wk_min) and mtc_close[j] <= wk_min
+            if weekend or (ex["exit_on_opposite"] and ((d == 1 and short_sig[j]) or (d == -1 and long_sig[j]))):
                 if j + 1 >= n:
                     j += 1
                     continue
                 j += 1
                 sp1 = spread[j] * pt
                 exit_px = (O[j] if d == 1 else O[j] + sp1) - d * slip
-                exit_reason = "opposite_signal"
+                exit_reason = "weekend_close" if weekend else "opposite_signal"
                 break
             j += 1
 
@@ -218,7 +286,8 @@ def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskControl
         ptr = j  # un signal à la clôture de la barre de sortie peut ouvrir la position suivante
     return {
         "trades": trades, "skipped": dict(skipped), "initial_equity": initial_equity, "final_equity": rs.equity,
-        "halted": rs.halted, "risk_pct_effective": req_risk, "risk_limits_sha256": risk.limits_sha256,
+        "halted": rs.halted, "risk_pct_effective": req_risk, "execution": exe, "m1_resolved": resolved_m1,
+        "news_windows_sha256": news.sha() if news is not None else None, "risk_limits_sha256": risk.limits_sha256,
         "n_bars": n - start, "window": [int(b.ts[start]), int(b.ts[n - 1])] if n > start else None,
         "genome_hash": semantic_hash(genome), "dataset_sha256": b.content_sha256,
         "cost_profile_sha256": sha256_json(cost_profile),

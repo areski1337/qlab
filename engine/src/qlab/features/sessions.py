@@ -76,3 +76,17 @@ def f_vwap(b, anchor, volume, dev):
         var = np.maximum((c["p2v"] / c["v"]).to_numpy() - vw * vw, 0)
     sd = np.sqrt(var)
     return {"vwap": vw, "upper": vw + dev * sd, "lower": vw - dev * sd}
+
+
+def minutes_to_weekly_close(ts_utc: np.ndarray) -> np.ndarray:
+    """Minutes jusqu'à la clôture hebdomadaire FX (vendredi 17:00 America/New_York) suivante.
+
+    Calcul en heure locale de New York : les changements d'heure US ont lieu le dimanche à 2 h,
+    jamais entre lundi et vendredi 17:00, donc la différence locale est exacte.
+    """
+    loc = pd.to_datetime(ts_utc, unit="s", utc=True).tz_convert("America/New_York")
+    wd = loc.dayofweek.to_numpy()          # 0 = lundi
+    mins = (loc.hour * 60 + loc.minute).to_numpy() + loc.second.to_numpy() / 60
+    days = (4 - wd) % 7
+    out = days * 1440 + (17 * 60 - mins)
+    return np.where(out <= 0, out + 7 * 1440, out)

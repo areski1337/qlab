@@ -83,7 +83,8 @@ class FeatureCache:
 
     def __init__(self, bars, context: dict | None = None, max_items: int = 512):
         self.bars = bars
-        self.context = context or {}  # timeframe -> Bars (HTF)
+        self.context = context or {}  # timeframe -> Bars (HTF, M1) ; "SYM:<symbole>" -> Bars (SMT)
+        self.news = None  # NewsWindows du contexte d'évaluation (filtre d'annonces), ou None
         self._d: dict[str, dict[str, np.ndarray]] = {}
         self.max_items = max_items
         self.hits = self.misses = 0

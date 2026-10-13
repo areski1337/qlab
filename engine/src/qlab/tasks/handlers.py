@@ -13,7 +13,10 @@ from .runner import handler
 
 
 def cache_for(lab, dsv: str, context: dict | None) -> FeatureCache:
-    return FeatureCache(dataset.load_bars(lab, dsv), {tf: dataset.load_bars(lab, v) for tf, v in (context or {}).items()})
+    from ..calendar.store import windows_for
+    c = FeatureCache(dataset.load_bars(lab, dsv), {tf: dataset.load_bars(lab, v) for tf, v in (context or {}).items()})
+    c.news = windows_for(lab, c.bars.spec, load_limits(lab.paths.risk_limits))
+    return c
 
 
 def _risk(lab):

@@ -26,6 +26,34 @@ bool     g_be_done = false;
 datetime g_last_exit_bar = 0;
 bool     g_had_pos = false;
 bool     g_first = true;
+// filtre d'annonces : fichier commun QLab\news_<symbole>.csv (COV;début;fin / BLK;début;fin, UTC)
+long     g_cov_a[], g_cov_b[], g_blk_a[], g_blk_b[];
+int      g_ncov = 0, g_nblk = 0;
+bool     g_news_ok = false;
+datetime g_news_loaded = 0;
+
+void QL_LoadNews()
+{
+   g_ncov = 0; g_nblk = 0; g_news_ok = false;
+   int h = FileOpen("QLab\\news_" + _Symbol + ".csv", FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   if(h == INVALID_HANDLE) return;
+   while(!FileIsEnding(h))
+   {
+      string parts[];
+      if(StringSplit(FileReadString(h), ';', parts) < 3) continue;
+      if(parts[0] == "QLAB_NEWS") { g_news_ok = true; continue; }
+      long a = StringToInteger(parts[1]), b = StringToInteger(parts[2]);
+      if(parts[0] == "COV") { ArrayResize(g_cov_a, g_ncov + 1); ArrayResize(g_cov_b, g_ncov + 1); g_cov_a[g_ncov] = a; g_cov_b[g_ncov] = b; g_ncov++; }
+      if(parts[0] == "BLK") { ArrayResize(g_blk_a, g_nblk + 1); ArrayResize(g_blk_b, g_nblk + 1); g_blk_a[g_nblk] = a; g_blk_b[g_nblk] = b; g_nblk++; }
+   }
+   FileClose(h);
+}
+
+bool QL_InIntervals(const long &a[], const long &b[], const int n, const long t)
+{
+   for(int k = 0; k < n; k++) if(t >= a[k] && t < b[k]) return true;
+   return false;
+}
 
 void QL_Trace(const string line)
 {
@@ -134,6 +162,7 @@ string QL_RiskCheck(const long day, const double lots, const double spread_pts)
    if(!(eq > 0)) return "equity_invalid";
    if((g_peak - eq) / g_peak * 100.0 >= QL_LIM_MAX_DD_PCT) { g_halted = true; return "max_drawdown_halt"; }
    if((g_day_start - eq) / g_day_start * 100.0 >= QL_LIM_MAX_DAILY_LOSS_PCT) return "daily_loss_limit";
+   if(QL_LIM_DAILY_PROFIT_TARGET_PCT > 0 && (eq - g_day_start) / g_day_start * 100.0 >= QL_LIM_DAILY_PROFIT_TARGET_PCT) return "daily_profit_target";
    if(QL_HasPosition()) return "max_open_positions";
    if(g_day_orders >= QL_LIM_MAX_ORDERS_PER_DAY) return "max_orders_per_day";
    if(lots > QL_LIM_MAX_LOTS) return "max_lots";
@@ -168,9 +197,10 @@ void OnTick()
    {
       double cl = g_b0.c[n - 1] + (g_dir == -1 ? g_b0.sp[n - 1] * pt : 0.0);
       double r_now = (cl - g_entry) * g_dir / g_dist;
-      bool opp = QL_GEN_EXIT_ON_OPPOSITE && ((g_dir == 1 && sig_short) || (g_dir == -1 && sig_long));
+      bool weekend = QL_LIM_WEEKEND_MIN > 0 && QL_MinToWeeklyClose(QL_ServerToUTC((long)bt)) <= QL_LIM_WEEKEND_MIN;
+      bool opp = weekend || (QL_GEN_EXIT_ON_OPPOSITE && ((g_dir == 1 && sig_short) || (g_dir == -1 && sig_long)));
       int held = iBarShift(_Symbol, QL_GEN_TF, g_entry_bar, false);   // barres depuis l'entrée e jusqu'à la barre courante
-      if(opp) { if(QL_ClosePosition("opposite_signal")) { g_last_exit_bar = bt; has = false; g_had_pos = false; } }
+      if(opp) { if(QL_ClosePosition(weekend ? "weekend_close" : "opposite_signal")) { g_last_exit_bar = bt; has = false; g_had_pos = false; } }
       else if(QL_GEN_TIME_STOP > 0 && held >= QL_GEN_TIME_STOP) { if(QL_ClosePosition("time_stop")) { g_last_exit_bar = bt; has = false; g_had_pos = false; } }
       else
       {
@@ -215,6 +245,14 @@ void OnTick()
    long day = QL_TradingDay(QL_ServerToUTC((long)bt));
    if(day != g_cnt_day) { g_cnt_day = day; g_cnt = 0; }
    if(g_cnt >= QL_GEN_MAX_TRADES_PER_DAY) { QL_Trace("SKIP;max_trades_per_day"); return; }
+   long t_entry = QL_ServerToUTC((long)bt);
+   if(QL_LIM_WEEKEND_MIN > 0 && QL_MinToWeeklyClose(t_entry) <= QL_LIM_WEEKEND_MIN) { QL_Trace("SKIP;risk:weekend_window"); return; }
+   if(QL_LIM_NEWS_ENABLED)
+   {
+      if(TimeCurrent() - g_news_loaded > 3600 || g_news_loaded == 0) { QL_LoadNews(); g_news_loaded = TimeCurrent(); }
+      if(!g_news_ok || !QL_InIntervals(g_cov_a, g_cov_b, g_ncov, t_entry)) { QL_Trace("SKIP;risk:news_data_unavailable"); return; }
+      if(QL_InIntervals(g_blk_a, g_blk_b, g_nblk, t_entry)) { QL_Trace("SKIP;risk:news_window"); return; }
+   }
    // Arrêt d'urgence global / suspension de cette stratégie : plus aucune entrée (positions existantes conservées).
    if(FileIsExist("QLab\\EMERGENCY_STOP", FILE_COMMON)) { QL_Trace("SKIP;emergency_stop"); return; }
    if(FileIsExist("QLab\\suspend_" + IntegerToString(QL_GEN_MAGIC) + ".flag", FILE_COMMON)) { QL_Trace("SKIP;suspended"); return; }

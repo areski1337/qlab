@@ -23,6 +23,9 @@ DEFAULT_LIMITS = {
     "max_lots": 50.0,
     "max_orders_per_day": 50,
     "max_spread_points": None,       # None = pas de filtre de spread configuré
+    "daily_profit_target_pct": None, # None = pas d'objectif ; atteint : plus d'entrée le jour même
+    "close_before_weekend_minutes": None,  # None = désactivé ; sinon clôture et blocage avant vendredi 17:00 NY
+    "news_filter": {"enabled": False, "before_min": 30, "after_min": 30, "min_volatility": "HIGH"},
     "live_trading_enabled": False,   # absolu : aucune campagne de recherche ne peut l'activer
 }
 
@@ -30,9 +33,19 @@ _HARD_CEILINGS = {"max_risk_per_trade_pct": 5.0, "max_daily_loss_pct": 20.0, "ma
 
 
 def load_limits(path: Path | None) -> dict:
-    lim = dict(DEFAULT_LIMITS)
+    lim = json.loads(json.dumps(DEFAULT_LIMITS))
     if path and Path(path).exists():
         lim.update(json.loads(Path(path).read_text(encoding="utf-8")))
+    nf = lim["news_filter"] = {**DEFAULT_LIMITS["news_filter"], **(lim.get("news_filter") or {})}
+    if nf["min_volatility"] not in ("LOW", "MEDIUM", "HIGH") or not (
+            0 <= nf["before_min"] <= 720 and 0 <= nf["after_min"] <= 720):
+        raise ValueError(f"news_filter invalide : {nf}")
+    wk = lim.get("close_before_weekend_minutes")
+    if wk is not None and not (0 < wk <= 1440):
+        raise ValueError("close_before_weekend_minutes hors de ]0, 1440]")
+    tgt = lim.get("daily_profit_target_pct")
+    if tgt is not None and not (0 < tgt <= 100):
+        raise ValueError("daily_profit_target_pct hors de ]0, 100]")
     for k, ceil in _HARD_CEILINGS.items():
         if not (0 < lim[k] <= ceil):
             raise ValueError(f"limite {k}={lim[k]} hors du plafond logiciel ]0, {ceil}]")
@@ -78,6 +91,9 @@ class RiskController:
             return st.halted
         if (st.day_start_equity - st.equity) / st.day_start_equity * 100 >= L["max_daily_loss_pct"]:
             return "daily_loss_limit"
+        tgt = L.get("daily_profit_target_pct")
+        if tgt and (st.equity - st.day_start_equity) / st.day_start_equity * 100 >= tgt:
+            return "daily_profit_target"
         if st.open_positions >= L["max_open_positions"]:
             return "max_open_positions"
         if st.day_orders >= L["max_orders_per_day"]:

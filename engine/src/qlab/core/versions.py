@@ -16,15 +16,15 @@ COMPONENT_VERSIONS: dict[str, str] = {
     "data_qc": "1.0",
     "feature_engine": "1.0",
     "regime_engine": "1.0",
-    "backtester_reference": "1.0",
+    "backtester_reference": "1.1",  # 1.1 : résolution M1, week-end, annonces, profil d'exécution
     "cost_model": "1.0",
     "metrics": "1.0",
     "validation_protocol": "1.0",
     "evolution_operators": "1.0",
     "nsga2": "1.0",
-    "mql5_generator": "1.1",  # 1.1 : InpRiskScale, verrou inter-robots, suspension/arrêt d'urgence
+    "mql5_generator": "1.2",  # 1.2 : week-end, objectif journalier, filtre d'annonces ; 1.1 : InpRiskScale, verrou inter-robots, suspension/arrêt d'urgence
     "parity": "1.0",
-    "risk_controller": "1.0",
+    "risk_controller": "1.1",  # 1.1 : objectif journalier, week-end, filtre d'annonces
     "portfolio": "1.0",
 }
 

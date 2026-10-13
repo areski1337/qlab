@@ -54,8 +54,10 @@ def walk_forward(n: int, protocol: dict = DEFAULT_PROTOCOL) -> list[dict]:
 def cache_key(rev_hash: str, cache, costs: dict, risk, segment: str, window, protocol: dict) -> str:
     """Clé exacte : toute dépendance influençant le résultat y figure (AT-005)."""
     ctx = {tf: b.content_sha256 for tf, b in sorted(cache.context.items())}
+    news = cache.news.sha() if getattr(cache, "news", None) is not None else None
     return sha256_json({"g": rev_hash, "d": cache.bars.content_sha256, "ctx": ctx, "seg": segment, "w": list(window),
-                        "c": sha256_json(costs), "r": risk.limits_sha256, "p": protocol, "v": versions_snapshot()})
+                        "c": sha256_json(costs), "r": risk.limits_sha256, "p": protocol, "v": versions_snapshot(),
+                        "n": news})
 
 
 def compute_metrics(content: dict, cache, costs: dict, risk, window) -> tuple[dict, dict]:
