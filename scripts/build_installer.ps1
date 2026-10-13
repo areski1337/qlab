@@ -1,5 +1,10 @@
 ﻿# Construit l'installateur Windows autonome (NSIS) : Python 3.13 standalone + dépendances embarqués.
 # La machine cible n'a besoin ni de uv ni de Python. Usage : powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
+#   -Version 0.2.0         fixe la version de l'application (app\package.json) avant le build
+#   -Publish <dossier>     copie l'installateur puis latest.json (version, fichier, taille, SHA-512, notes)
+#                          dans la source de mises à jour lue par l'application
+#   -Notes "..."           notes de version affichées dans l'application
+param([string]$Version = "", [string]$Publish = "", [string]$Notes = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $build = "$root\app\build"
@@ -38,5 +43,21 @@ npm run build
 
 Write-Host "4/4 Installateur NSIS (sortie : app\release-installer)"
 npx electron-builder --win nsis "-c.directories.output=release-installer"
+if ($LASTEXITCODE -ne 0) { throw "electron-builder a échoué" }
 Pop-Location
-Get-ChildItem "$root\app\release-installer\*.exe" | ForEach-Object { Write-Host "Installateur : $($_.FullName) ($([math]::Round($_.Length / 1MB)) Mo)" }
+$ver = (Get-Content "$root\app\package.json" -Raw | ConvertFrom-Json).version
+$exe = Get-Item "$root\app\release-installer\QLab Setup $ver.exe"
+$manifest = [ordered]@{
+    version = $ver; file = $exe.Name; size = $exe.Length
+    sha512 = (Get-FileHash -Algorithm SHA512 $exe.FullName).Hash.ToLower()
+    released_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"); notes = $Notes
+}
+[IO.File]::WriteAllText("$root\app\release-installer\latest.json", ($manifest | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+Write-Host "Installateur : $($exe.FullName) ($([math]::Round($exe.Length / 1MB)) Mo)"
+if ($Publish) {
+    New-Item -ItemType Directory -Force $Publish | Out-Null
+    Copy-Item $exe.FullName $Publish -Force
+    # manifeste en dernier : une vérification pendant la copie ne voit jamais un manifeste sans son fichier
+    Copy-Item "$root\app\release-installer\latest.json" $Publish -Force
+    Write-Host "Publié dans $Publish (version $ver)"
+}

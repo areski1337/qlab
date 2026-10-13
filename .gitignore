@@ -13,3 +13,6 @@ release/
 .obsidian/workspace.json
 app/build/
 release-installer/
+
+# installateurs publiés (source des mises à jour de l'application)
+/updates/
