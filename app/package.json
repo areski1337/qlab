@@ -73,7 +73,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false,
-      "shortcutName": "QLab"
+      "shortcutName": "QLab",
+      "artifactName": "QLab.Setup.${version}.${ext}"
     }
   }
 }
