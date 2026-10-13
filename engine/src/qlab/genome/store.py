@@ -33,7 +33,8 @@ def create_revision(con, content: dict, parents: list[tuple[str, str, dict]] | N
     if errs:
         raise InvalidGenome(errs)
     content = model.renumber(content)
-    parents = parents or []
+    # un croisement d'un parent avec lui-même ne crée qu'un lien de filiation
+    parents = list({p[0]: p for p in (parents or [])}.values())
     if len(parents) == 1:
         p = con.execute("SELECT genome_id FROM genome_revisions WHERE id=?", (parents[0][0],)).fetchone()
         gid = p["genome_id"]
