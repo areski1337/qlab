@@ -25,12 +25,21 @@ class MT5Unavailable(RuntimeError):
     pass
 
 
+def _terminal_running() -> bool:
+    import subprocess
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq terminal64.exe", "/NH"], capture_output=True, text=True)
+    return "terminal64.exe" in out.stdout
+
+
 @contextmanager
 def mt5_session(terminal_path: str | None = None, timeout_ms: int = 60000):
+    """Session de lecture. Si le terminal n'était pas ouvert, il est refermé proprement (WM_CLOSE) à la fin :
+    l'état de l'utilisateur est restauré et le Strategy Tester reste utilisable."""
     try:
         import MetaTrader5 as mt5
     except ImportError as e:
         raise MT5Unavailable("paquet MetaTrader5 non installé") from e
+    was_running = _terminal_running()
     kw = {"timeout": timeout_ms}
     if terminal_path:
         kw["path"] = terminal_path
@@ -40,6 +49,9 @@ def mt5_session(terminal_path: str | None = None, timeout_ms: int = 60000):
         yield mt5
     finally:
         mt5.shutdown()
+        if not was_running:
+            import subprocess
+            subprocess.run(["taskkill", "/IM", "terminal64.exe"], capture_output=True)  # sans /F : fermeture propre
 
 
 def status(terminal_path: str | None = None) -> dict:

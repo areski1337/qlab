@@ -183,6 +183,8 @@
   },
   "active": "8a4cb13f2c3b13f6",
   "lastOpenFiles": [
+    "engine/tests/test_passport.py",
+    "engine/src/qlab/passport/build.py",
     "engine/tests/test_mql5.py",
     "var/devdata/artifacts/99/9915608799146edb45c701ab61d3d1ce9a6a876bc92fd113e941771b234699a5",
     "var/devdata/artifacts/99",
@@ -192,8 +194,6 @@
     "var/devdata/artifacts/91",
     "var/devdata/artifacts/4e/4ee44887d1898e04b70072543eade8f3a2a0112e7204354f6cf9113416ced554",
     "var/devdata/artifacts/4e",
-    "var/devdata/qlab.sqlite-shm",
-    "var/devdata/qlab.sqlite-wal",
     "engine/README.md"
   ]
 }

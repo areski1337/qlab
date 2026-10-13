@@ -115,9 +115,7 @@ def compile_ea(lab, ea: dict, timeout_s: int = 180) -> dict:
     return record("failed", errors, warnings, proc.returncode, log_sha, diag="\n".join(lines) or "ex5 absent")
 
 
-def terminal_running() -> bool:
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq terminal64.exe", "/NH"], capture_output=True, text=True)
-    return "terminal64.exe" in out.stdout
+from ..data.mt5_source import _terminal_running as terminal_running  # noqa: E402
 
 
 def run_tester(lab, ea: dict, run_id: str, symbol: str, tf: str, from_date: str, to_date: str,
