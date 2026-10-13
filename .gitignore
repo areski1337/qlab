@@ -11,3 +11,5 @@ var/
 dist-electron/
 release/
 .obsidian/workspace.json
+app/build/
+release-installer/

@@ -105,6 +105,9 @@ class RiskLimits(BaseModel):
     max_lots: float = Field(gt=0)
     max_orders_per_day: int = Field(ge=1, le=1000)
     max_spread_points: float | None = None
+    daily_profit_target_pct: float | None = None
+    close_before_weekend_minutes: int | None = None
+    news_filter: dict = {"enabled": False, "before_min": 30, "after_min": 30, "min_volatility": "HIGH"}
     live_trading_enabled: bool = False
 
 
@@ -133,6 +136,35 @@ def logs(n: int = 200, lab=Depends(L)):
 def audit_events(n: int = 200, subject: str | None = None, lab=Depends(L)):
     q = "SELECT * FROM audit_events " + ("WHERE subject_id=? " if subject else "") + "ORDER BY id DESC LIMIT ?"
     return rows(lab.con.execute(q, ((subject,) if subject else ()) + (min(n, 2000),)))
+
+
+# ---------------------------------------------------------------- calendrier économique (FXStreet)
+@app.get(f"{API}/calendar")
+def calendar_status(limit: int = 200, lab=Depends(L)):
+    from ..calendar import store
+    st = store.status(lab)
+    st["upcoming_high"] = rows(lab.con.execute(
+        "SELECT date_ts, currency, name, volatility, is_tentative FROM economic_events WHERE date_ts >= strftime('%s','now') "
+        "AND volatility IN ('HIGH','MEDIUM') ORDER BY date_ts LIMIT ?", (min(limit, 1000),)))
+    return st
+
+
+class CalRefresh(BaseModel):
+    date_from: str = Field(alias="from")
+    date_to: str = Field(alias="to")
+
+
+@app.post(f"{API}/calendar/refresh")
+def calendar_refresh(body: CalRefresh, lab=Depends(L)):
+    from ..calendar import fxstreet
+    from ..core.timeutil import iso_to_ts
+    if fxstreet.credentials() is None:
+        raise HTTPException(409, "clés FXStreet absentes : définir QLAB_FXSTREET_CLIENT_ID et QLAB_FXSTREET_CLIENT_SECRET "
+                                 "(variables d'environnement) puis redémarrer QLab")
+    a, b = iso_to_ts(body.date_from + "T00:00:00Z"), iso_to_ts(body.date_to + "T00:00:00Z")
+    if b <= a or b - a > 7 * 366 * 86400:
+        raise HTTPException(422, "plage invalide (au plus 7 ans)")
+    return submit(lab, "calendar_refresh", {"start": a, "end": b})
 
 
 # ---------------------------------------------------------------- tâches
@@ -476,8 +508,8 @@ def demo_list(lab=Depends(L)):
     except FileNotFoundError:
         emergency = None
     return {"deployments": out, "emergency_stop": emergency,
-            "news_filter": "inactif : aucun calendrier économique disponible dans cette version",
-            "weekend_close": "non implémenté"}
+            "news_filter": "actif si activé dans les limites et calendrier FXStreet couvrant la période ; sinon entrées refusées",
+            "weekend_close": "configurable (limites de risque)"}
 
 
 class DemoReg(BaseModel):
@@ -625,10 +657,30 @@ async def events(request: Request):
 
 
 # ---------------------------------------------------------------- worker et démarrage
+def calendar_tick(lab, state: dict) -> None:
+    """Toutes les 6 h, si des clés FXStreet sont configurées : rafraîchit [-1 j, +14 j] et réécrit les fichiers
+    d'annonces lus par les EA des déploiements démo actifs. Un échec est journalisé ; les EA refusent alors les
+    entrées dès que la couverture expire (aucune donnée inventée)."""
+    import time as _t
+    from ..calendar import fxstreet, store
+    if fxstreet.credentials() is None or _t.time() - state.get("last", 0) < 6 * 3600:
+        return
+    state["last"] = _t.time()
+    now = int(_t.time())
+    try:
+        store.refresh(lab, now - 86400, now + 14 * 86400)
+        from ..demo.monitor import publish_news_files
+        publish_news_files(lab)
+    except Exception as e:
+        lab.log.error("calendar.refresh_failed", error=str(e))
+
+
 def worker_loop(root: str, stop: threading.Event) -> None:
     lab = Lab.attach(root)
+    cal_state: dict = {}
     try:
         while not stop.is_set():
+            calendar_tick(lab, cal_state)
             try:
                 t = runner.run_next(lab)
             except Exception as e:  # le worker ne meurt pas sur une erreur inattendue

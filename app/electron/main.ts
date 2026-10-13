@@ -30,12 +30,19 @@ function engineDir(): string {
 function startEngine(): Promise<void> {
   return new Promise((resolve, reject) => {
     const dir = engineDir();
-    const args = ["run", "--project", dir, "python", "-m", "qlab.api.app"];
-    if (process.env.QLAB_DATA_DIR) args.push("--data-dir", process.env.QLAB_DATA_DIR);
     const env: NodeJS.ProcessEnv = { ...process.env, QLAB_API_TOKEN: TOKEN };
-    // Application empaquetée : l'environnement Python vit dans le profil utilisateur (dossier d'installation en lecture seule).
-    if (app.isPackaged) env.UV_PROJECT_ENVIRONMENT = path.join(app.getPath("userData"), "engine-venv");
-    engine = spawn("uv", args, { cwd: dir, env, windowsHide: true });
+    const extra = process.env.QLAB_DATA_DIR ? ["--data-dir", process.env.QLAB_DATA_DIR] : [];
+    // Installateur autonome : Python embarqué (resources/python) + sources du moteur, sans uv.
+    const bundled = path.join(process.resourcesPath, "python", "python.exe");
+    if (app.isPackaged && fs.existsSync(bundled)) {
+      env.PYTHONPATH = path.join(dir, "src");
+      env.PYTHONDONTWRITEBYTECODE = "1";  // dossier d'installation potentiellement en lecture seule
+      engine = spawn(bundled, ["-m", "qlab.api.app", ...extra], { cwd: app.getPath("userData"), env, windowsHide: true });
+    } else {
+      // Développement (ou paquet sans Python embarqué) : uv gère l'environnement, dans le profil si empaqueté.
+      if (app.isPackaged) env.UV_PROJECT_ENVIRONMENT = path.join(app.getPath("userData"), "engine-venv");
+      engine = spawn("uv", ["run", "--project", dir, "python", "-m", "qlab.api.app", ...extra], { cwd: dir, env, windowsHide: true });
+    }
     const timer = setTimeout(() => reject(new Error("le moteur n'a pas démarré en 120 s")), 120_000);
     engine.stdout?.on("data", (d: Buffer) => {
       const s = d.toString();

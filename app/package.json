@@ -49,11 +49,29 @@
           "src/**",
           "!**/__pycache__/**"
         ]
+      },
+      {
+        "from": "build/python",
+        "to": "python",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
       }
     ],
     "win": {
-      "target": "dir"
+      "target": [
+        "nsis",
+        "dir"
+      ]
     },
-    "asar": true
+    "asar": true,
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "QLab"
+    }
   }
 }

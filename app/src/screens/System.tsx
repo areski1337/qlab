@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
-import { Badge, Btn, Card, Err, Field, fmt, Json, Table, useAction, useApi } from "../ui";
+import { Badge, Btn, Card, Err, Field, fmt, Json, Table, useAction, useApi, utc } from "../ui";
 
 export function Tasks() {
   const t = useApi<any[]>("/tasks", [], true);
@@ -39,6 +39,33 @@ export function Tasks() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function CalendarCard() {
+  const c = useApi("/calendar", [], true);
+  const a = useAction();
+  const [r, setR] = useState({ from: "2020-01-01", to: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10) });
+  const d = c.data as any;
+  return (
+    <Card title="Calendrier économique (API officielle FXStreet)">
+      <p className="muted">Clés fournies par FXStreet (OAuth2), lues uniquement depuis les variables d'environnement QLAB_FXSTREET_CLIENT_ID / QLAB_FXSTREET_CLIENT_SECRET ; jamais stockées. Données à usage personnel, non incluses dans les exports.</p>
+      <Err msg={c.error} />
+      {d && <dl className="kv">
+        <dt>Clés configurées</dt><dd className={d.credentials_configured ? "" : "real-off"}>{d.credentials_configured ? "oui" : "non — filtre inactif tant qu'aucune donnée n'est récupérée"}</dd>
+        <dt>Événements</dt><dd>{fmt(d.events, 0)}</dd>
+        <dt>Couverture</dt><dd>{d.coverage_from ? `${utc(d.coverage_from)} → ${utc(d.coverage_to)}` : "aucune"}</dd>
+        <dt>Dernier rafraîchissement</dt><dd>{d.last_refresh ?? "—"}</dd>
+      </dl>}
+      <div className="row">
+        <Field label="Du"><input type="date" value={r.from} onChange={(e) => setR({ ...r, from: e.target.value })} /></Field>
+        <Field label="Au"><input type="date" value={r.to} onChange={(e) => setR({ ...r, to: e.target.value })} /></Field>
+      </div>
+      <Btn busy={a.busy} disabled={!d?.credentials_configured} onClick={() => a.run(() => api.post("/calendar/refresh", r), (x) => `Récupération soumise (tâche ${x.task_id}).`)}>Récupérer</Btn>
+      {a.view}
+      {d?.upcoming_high?.length > 0 && <Table rows={d.upcoming_high.slice(0, 20).map((x: any, i: number) => ({ id: i, ...x }))} cols={[
+        { k: "date_ts", t: "Date", f: (x) => utc(x.date_ts) }, { k: "currency", t: "Devise" }, { k: "name", t: "Événement" }, { k: "volatility", t: "Impact" }]} />}
+    </Card>
   );
 }
 
@@ -106,6 +133,17 @@ export function Settings() {
               <Field label="Ordres max / jour"><input type="number" value={lim.max_orders_per_day} onChange={num("max_orders_per_day")} /></Field>
               <Field label="Spread max (points, vide = aucun)"><input type="number" value={lim.max_spread_points ?? ""} onChange={num("max_spread_points")} /></Field>
             </div>
+            <div className="row">
+              <Field label="Objectif de gain journalier (%, vide = aucun)"><input type="number" step="0.1" value={lim.daily_profit_target_pct ?? ""} onChange={num("daily_profit_target_pct")} /></Field>
+              <Field label="Clôture avant week-end (min, vide = non)"><input type="number" value={lim.close_before_weekend_minutes ?? ""} onChange={num("close_before_weekend_minutes")} /></Field>
+            </div>
+            <div className="row">
+              <label><input type="checkbox" checked={!!lim.news_filter?.enabled} onChange={(e) => setLim({ ...lim, news_filter: { ...lim.news_filter, enabled: e.target.checked } })} /> Filtre d'annonces (FXStreet)</label>
+              <Field label="Avant (min)"><input type="number" value={lim.news_filter?.before_min ?? 30} onChange={(e) => setLim({ ...lim, news_filter: { ...lim.news_filter, before_min: Number(e.target.value) } })} /></Field>
+              <Field label="Après (min)"><input type="number" value={lim.news_filter?.after_min ?? 30} onChange={(e) => setLim({ ...lim, news_filter: { ...lim.news_filter, after_min: Number(e.target.value) } })} /></Field>
+              <Field label="Impact minimal"><select value={lim.news_filter?.min_volatility ?? "HIGH"} onChange={(e) => setLim({ ...lim, news_filter: { ...lim.news_filter, min_volatility: e.target.value } })}><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select></Field>
+            </div>
+            <p className="muted">Filtre actif sans calendrier couvrant la période : toute entrée est refusée (prudence).</p>
             <p className="real-off">Trading réel : désactivé — non activable dans cette version.</p>
             <Btn kind="primary" busy={save.busy} onClick={() => save.run(() => api.put("/risk-limits", { ...lim, live_trading_enabled: false }), () => "Limites enregistrées (audit).")}>Enregistrer</Btn>
             {save.view}
@@ -120,6 +158,7 @@ export function Settings() {
           </dl>}
           <h3>Configuration</h3><Json v={(s.data as any)?.settings} />
         </Card>
+        <CalendarCard />
         <EngineExperiments />
         <Card title="Sauvegardes" wide actions={<Btn busy={bk.busy} kind="primary" onClick={() => bk.run(() => api.post("/backups"), (r) => `Sauvegarde soumise (tâche ${r.task_id}).`)}>Sauvegarder maintenant</Btn>}>
           {bk.view}

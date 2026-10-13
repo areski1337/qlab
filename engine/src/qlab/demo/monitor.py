@@ -103,6 +103,23 @@ def set_flag(lab, magic: int | None, on: bool, reason: str) -> dict:
     return {"path": str(p), "active": p.exists()}
 
 
+def publish_news_files(lab) -> list[str]:
+    """Écrit QLab\\news_<symbole>.csv (dossier commun MT5) pour chaque déploiement démo actif."""
+    from ..calendar.store import windows_for, write_ea_file
+    from ..risk.controller import load_limits
+    lim = load_limits(lab.paths.risk_limits)
+    out = []
+    rows = lab.con.execute("SELECT DISTINCT e.symbol, v.symbol_spec_json FROM demo_deployments d "
+                           "JOIN ea_artifacts e ON e.id=d.ea_id JOIN dataset_versions v ON json_extract(v.symbol_spec_json,"
+                           "'$.symbol')=e.symbol WHERE d.state IN ('registered','observing')")
+    for sym, spec in rows:
+        w = windows_for(lab, json.loads(spec), lim)
+        p = flag_path(lab).parent / f"news_{sym}.csv"
+        write_ea_file(p, w, bool((lim.get("news_filter") or {}).get("enabled")))
+        out.append(str(p))
+    return out
+
+
 def register(lab, rev_id: str) -> dict:
     """Enregistre un déploiement démo pour la dernière version d'EA compilée de la révision."""
     rev = gstore.get(lab.con, rev_id)

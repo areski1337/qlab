@@ -112,6 +112,16 @@ def export(lab, task):
     return export_bundle(lab, task["payload"]["revision_id"])
 
 
+@handler("calendar_refresh")
+def calendar_refresh(lab, task):
+    from ..calendar import store
+    from ..demo.monitor import publish_news_files
+    p = task["payload"]
+    out = store.refresh(lab, int(p["start"]), int(p["end"]))
+    out["news_files"] = publish_news_files(lab)
+    return out
+
+
 @handler("backup")
 def backup(lab, task):
     from ..storage.backup import create_backup
