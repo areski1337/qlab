@@ -112,6 +112,11 @@ def behavior(m: dict) -> np.ndarray:
                      _v(m.get("long_share"), 0.5), max(-2, min(2, _v(m.get("expectancy_r"), 0)))])
 
 
+def behavior_sig(m: dict) -> tuple:
+    """Signature de comportement : deux génomes aux trades identiques ont la même signature."""
+    return ("beh", m["n_trades"], round(m["net_profit"] or 0.0, 6), round(m.get("max_dd_pct") or 0.0, 6))
+
+
 def novelty(b: np.ndarray, others: list[np.ndarray], k: int = 5) -> float:
     if not others:
         return 0.0
@@ -196,9 +201,20 @@ class Campaign:
                     g = specialize(g, self.cfg["specialization_session"])
                 pops[t].append(self.revision(g)["id"])
         return {"phase": "tribes", "gen": 0, "pops": pops, "archives": {t: [] for t in self.cfg["tribes"]},
-                "rng": _rng_dump(rng), "op_stats": {op: [0, 0] for op in ops.MUTATIONS} | {"crossover": [0, 0]},
+                "rng": _rng_dump(rng), "op_stats": (prior := self.prior_op_stats()),
+                "op_prior": {k: list(v) for k, v in prior.items()},
                 "stagnation": {t: {"best": None, "since": 0, "level": 0} for t in self.cfg["tribes"] + ["merge"]},
                 "history": [], "behaviors": []}
+
+    def prior_op_stats(self, cap: int = 20) -> dict:
+        """A priori issu de la mémoire globale, ramené à au plus `cap` essais équivalents (influence bornée)."""
+        out = {op: [0, 0] for op in ops.MUTATIONS} | {"crossover": [0, 0]}
+        for key, t, s in self.lab.con.execute("SELECT key, tries, successes FROM evolution_memory WHERE scope='global'"):
+            op = key.removeprefix("operator:")
+            if op in out and t > 0:
+                k = min(1.0, cap / t)
+                out[op] = [round(t * k), round(s * k)]
+        return out
 
     def run(self) -> dict:
         lab = self.lab
@@ -273,11 +289,12 @@ class Campaign:
         allr, allm, allv = parents + children, pm + cm, pv + cv
         objs, vio = self.score(tribe, allr, allm, allv, st)
         chosen, rank2, _ = nsga2.select(objs, vio, n)
-        # dédoublonnage : un même comportement sémantique n'occupe qu'une place
+        # dédoublonnage : un même génome (empreinte) ou un même comportement (trades identiques) n'occupe qu'une place
         seen, keep = set(), []
         for i in chosen:
-            if allr[i]["semantic_hash"] not in seen:
-                seen.add(allr[i]["semantic_hash"])
+            sig = (allr[i]["semantic_hash"], behavior_sig(allm[i]))
+            if sig[0] not in seen and sig[1] not in seen:
+                seen.update(sig)
                 keep.append(i)
         st["pops"][key] = [allr[i]["id"] for i in keep]
 
@@ -353,8 +370,13 @@ class Campaign:
         vm = self.evaluate_many(revs, "validation", pool)
         objs, vio = self.score("merge", revs, tm, vm, st)
         F = nsga2.fronts(objs, vio)
-        front = [i for i in F[0] if vio[i] == 0] if F else []
-        n_eval = self.lab.con.execute("SELECT COUNT(*) FROM evaluations WHERE campaign_id=?", (self.cid,)).fetchone()[0]
+        front, sigs = [], set()
+        for i in (F[0] if F else []):
+            if vio[i] == 0 and behavior_sig(tm[i]) not in sigs:
+                sigs.add(behavior_sig(tm[i]))
+                front.append(i)
+        n_eval = self.lab.con.execute("SELECT COUNT(DISTINCT e.id) FROM evaluations e JOIN genome_revisions g "
+                                      "ON g.id=e.revision_id WHERE g.campaign_id=?", (self.cid,)).fetchone()[0]
         n_rev = self.lab.con.execute("SELECT COUNT(*) FROM genome_revisions WHERE campaign_id=?", (self.cid,)).fetchone()[0]
         for i in front:
             r = revs[i]
@@ -365,7 +387,7 @@ class Campaign:
                                   {"rule": "front de Pareto final faisable (contraintes éliminatoires respectées)",
                                    "constraints": self.cfg["constraints"]},
                                   {"train_evaluation": ev["id"], "campaign": self.cid})
-        self.save_memory(st)
+        self.save_memory(st, st.get("op_prior", {}))
         return {"front": [{"revision_id": revs[i]["id"], "train": tm[i], "validation": vm[i],
                            "objectives": objs[i]} for i in front],
                 "candidates_generated": n_rev, "evaluations": n_eval, "op_stats": st["op_stats"],
@@ -373,9 +395,11 @@ class Campaign:
                 "warning": "Le meilleur résultat observé parmi de nombreux candidats est biaisé à la hausse "
                            "(biais de sélection) : ce n'est pas une estimation de la performance future."}
 
-    def save_memory(self, st: dict) -> None:
+    def save_memory(self, st: dict, prior: dict) -> None:
         for scope in ("global", f"campaign:{self.cid}"):
             for op, (t, s) in st["op_stats"].items():
+                pt, ps = prior.get(op, [0, 0])
+                t, s = t - pt, s - ps  # n'enregistre que les essais de cette campagne
                 self.lab.con.execute(
                     "INSERT INTO evolution_memory VALUES (?,?,?,?,?) ON CONFLICT(scope,key) DO UPDATE SET "
                     "tries=tries+excluded.tries, successes=successes+excluded.successes, updated_at=excluded.updated_at",

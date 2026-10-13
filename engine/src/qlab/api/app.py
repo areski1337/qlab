@@ -381,7 +381,8 @@ def campaign_detail(cid: str, lab=Depends(L)):
         "stagnation": st["stagnation"], "archives": {k: len(v) for k, v in st["archives"].items()},
         "populations": {k: len(v) for k, v in st["pops"].items()}}
     c["n_candidates"] = lab.con.execute("SELECT COUNT(*) FROM genome_revisions WHERE campaign_id=?", (cid,)).fetchone()[0]
-    c["n_evaluations"] = lab.con.execute("SELECT COUNT(*) FROM evaluations WHERE campaign_id=?", (cid,)).fetchone()[0]
+    c["n_evaluations"] = lab.con.execute("SELECT COUNT(DISTINCT e.id) FROM evaluations e JOIN genome_revisions g "
+                                         "ON g.id=e.revision_id WHERE g.campaign_id=?", (cid,)).fetchone()[0]
     return c
 
 

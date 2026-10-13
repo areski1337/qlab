@@ -224,8 +224,10 @@ def run_suite(lab, rev: dict, cache, costs: dict, risk, protocol: dict, campaign
     trials = []
     if campaign_id:
         import json
+        # essais = révisions de la campagne évaluées sur train, y compris via le cache partagé entre campagnes
         trials = [json.loads(r[0]).get("sharpe") for r in lab.con.execute(
-            "SELECT metrics_json FROM evaluations WHERE campaign_id=? AND segment='train'", (campaign_id,))]
+            "SELECT MAX(e.metrics_json) FROM evaluations e JOIN genome_revisions g ON g.id=e.revision_id "
+            "WHERE g.campaign_id=? AND e.segment='train' GROUP BY g.id", (campaign_id,))]
     t_obs, skew, kurt = daily_moments(res, wts)
     rep = {
         "window": window, "base": _summ(m),

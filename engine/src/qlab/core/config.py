@@ -20,7 +20,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "metaeditor_path": r"C:\Program Files\MetaTrader 5\MetaEditor64.exe",
         "data_path": None,  # détecté via terminal_info() si None
     },
-    "workers": {"max_processes": max(1, (os.cpu_count() or 2) - 1), "memory_limit_mb": 4096},
+    "workers": {"max_processes": max(1, (os.cpu_count() or 2) - 1)},
     "disk": {"min_free_mb": 2048},
     "api": {"host": "127.0.0.1"},  # jamais 0.0.0.0 par défaut
     "ui": {"language": "fr"},

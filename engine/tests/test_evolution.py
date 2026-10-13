@@ -170,3 +170,20 @@ def test_parallel_workers_match_inline(tmp_path):
         out.append(sorted((f["train"]["n_trades"], round(f["train"]["net_profit"], 6)) for f in t["result"]["front"]))
         lab.close()
     assert out[0] == out[1]
+
+
+def test_global_operator_memory_is_bounded_prior(lab):
+    dsv = import_synth(lab)
+    run_campaign(lab, small_cfg(dsv))
+    glob = {r[0]: r[1] for r in lab.con.execute("SELECT key, tries FROM evolution_memory WHERE scope='global'")}
+    assert sum(glob.values()) > 0
+    cid, tid = campaign.create(lab, small_cfg(dsv, seed=9))
+    c = campaign.Campaign(lab, tid, cid, json.loads(lab.con.execute(
+        "SELECT config_json FROM campaigns WHERE id=?", (cid,)).fetchone()[0]))
+    prior = c.prior_op_stats(cap=20)
+    assert all(t <= 20 and 0 <= s <= t for t, s in prior.values())
+    assert any(t > 0 for t, _ in prior.values())
+    runner.run_next(lab)
+    after = {r[0]: r[1] for r in lab.con.execute("SELECT key, tries FROM evolution_memory WHERE scope='global'")}
+    own = {r[0]: r[1] for r in lab.con.execute("SELECT key, tries FROM evolution_memory WHERE scope=?", (f"campaign:{cid}",))}
+    assert all(after[k] == glob.get(k, 0) + own.get(k, 0) for k in after)  # l'a priori n'est pas recompté
