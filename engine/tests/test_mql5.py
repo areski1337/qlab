@@ -55,9 +55,9 @@ def test_generation_deterministic_and_traceable():  # AT-014
 def test_unsupported_feature_blocks_export():
     rev = rev_of("valid_ema_trend_rsi.json")
     rev["content"]["entry"]["long"]["children"].append(
-        {"id": "n99", "op": "event", "ref": {"feature": "regime", "params": {"trend_period": 50, "confirm": 3},
-                                             "output": "bull_trend"}})
-    with pytest.raises(generator.UnsupportedForExport, match="regime"):
+        {"id": "n99", "op": "compare", "left": {"feature": "price", "params": {}, "output": "close"}, "cmp": "gt",
+         "right": {"feature": "vwap", "params": {"anchor": "day", "volume": "real", "dev": 1.0}, "output": "vwap"}})
+    with pytest.raises(generator.UnsupportedForExport, match="volume=real"):
         generator.generate(rev, "XAUUSD", "NY+7", DEFAULT_LIMITS, LIM_SHA)
     with pytest.raises(generator.UnsupportedForExport, match="fuseau"):
         generator.generate(rev_of("valid_ema_trend_rsi.json"), "XAUUSD", "Europe/Athens", DEFAULT_LIMITS, LIM_SHA)
@@ -79,7 +79,7 @@ def test_real_metaeditor_compiles_examples(tmp_path):
     from qlab.genome import store as gstore
     from qlab.mql5 import toolchain
     lab = Lab.open(tmp_path / "d")
-    for f in ("valid_ema_trend_rsi.json", "valid_ict_fvg_killzone.json"):
+    for f in ("valid_ema_trend_rsi.json", "valid_ict_fvg_killzone.json", "valid_ict_judas_po3_smt.json", "valid_regime_trend.json"):
         rev = gstore.create_revision(lab.con, json.loads((EX / f).read_text(encoding="utf-8")))
         ea = toolchain.save_ea(lab, rev, "XAUUSD", "NY+7", DEFAULT_LIMITS, LIM_SHA)
         comp = toolchain.compile_ea(lab, ea)

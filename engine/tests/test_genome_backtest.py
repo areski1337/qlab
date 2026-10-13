@@ -46,7 +46,7 @@ def run(g, df, costs=COSTS, limits=DEFAULT_LIMITS, **kw):
 # ---------- génome ----------
 
 def test_examples_valid():
-    for f in ("valid_ema_trend_rsi.json", "valid_ict_fvg_killzone.json"):
+    for f in ("valid_ema_trend_rsi.json", "valid_ict_fvg_killzone.json", "valid_ict_judas_po3_smt.json", "valid_regime_trend.json"):
         assert model.validate(load(f)) == [], f
 
 

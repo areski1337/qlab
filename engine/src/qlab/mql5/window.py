@@ -60,6 +60,12 @@ def feature_window(name: str, p: dict, tf: str) -> int:
         return 2 * BARS_PER_WEEK(tf) + 400
     if name == "vwap":
         return (2 * BARS_PER_WEEK(tf) if p["anchor"] == "week" else 2 * 86400 // tf_seconds(tf)) + 50
+    if name in ("judas", "po3"):
+        return 2 * 86400 // tf_seconds(tf) + _exp_window(14, "wilder")
+    if name == "smt":
+        return p["lookback"] + 3
+    if name == "mitigation":
+        return max(_exp_window(14, "wilder") + 1, 3000)
     if name == "regime":
         return max(_exp_window(p["trend_period"], "ema"), 2 * _exp_window(14, "wilder"), _exp_window(50, "wilder"), 600)
     raise KeyError(name)

@@ -97,3 +97,73 @@ def test_cache_key_changes_with_version(bars, monkeypatch):  # AT-005
     monkeypatch.setitem(REGISTRY, "ema", dataclasses.replace(REGISTRY["ema"], version="9.9"))
     assert c.key("ema", {"period": 20}, None) != k1
     assert c.key("ema", {"period": 21}, None) != k1
+
+
+def _bars_at(start, closes, highs, lows, tf="M5", sym="S"):
+    return Bars.from_frame(synthetic.from_closes(closes, start=start, highs=highs, lows=lows, timeframe=tf), sym, tf,
+                           content_sha256=sym + start)
+
+
+def test_judas_reference():
+    # 2024-01-09 (hiver) : asia_kz = 01:00-05:00 UTC ; london_kz = 07:00-10:00 UTC. Barres M5 à partir de 22:00 UTC (17:00 NY).
+    start = "2024-01-08T22:00:00Z"
+    n = 12 * 12  # 12 heures
+    c = np.full(n, 100.0)
+    h, l = c + 0.2, c - 0.2
+    ts0 = iso_to_ts(start)
+    k = lambda iso: (iso_to_ts(iso) - ts0) // 300
+    h[k("2024-01-09T02:00:00Z")], l[k("2024-01-09T03:00:00Z")] = 101.0, 99.0  # range asiatique [99, 101]
+    i = k("2024-01-09T07:30:00Z")
+    l[i], c[i] = 98.5, 99.5  # balayage du bas asiatique puis clôture dedans
+    b = _bars_at(start, c, h, l)
+    out = REGISTRY["judas"].compute(b, sweep_atr=0.0)
+    assert np.flatnonzero(out["judas_bull"]).tolist() == [i] and out["judas_bear"].sum() == 0
+    assert out["asian_low"][i] == 99.0 and np.isnan(out["asian_low"][k("2024-01-09T03:00:00Z")])  # incomplet en session
+
+
+def test_po3_reference():
+    start = "2024-01-08T22:00:00Z"
+    n = 12 * 14
+    ts0 = iso_to_ts(start)
+    k = lambda iso: (iso_to_ts(iso) - ts0) // 300
+    c = np.full(n, 100.0)
+    h, l = c + 0.1, c - 0.1
+    m = k("2024-01-09T05:00:00Z")  # minuit NY (hiver) = 05:00 UTC
+    l[m + 3] = 97.0                # manipulation baissière
+    c[m + 6] = 100.5               # clôture au-dessus de l'ouverture de minuit → distribution haussière
+    b = _bars_at(start, c, h, l)
+    out = REGISTRY["po3"].compute(b, manip_atr=0.5)
+    assert np.isnan(out["midnight_open"][m - 1]) and out["midnight_open"][m] == 100.0
+    assert out["po3_bull"][m + 5] == 0 and out["po3_bull"][m + 6] == 1 and out["po3_bull"][-1] == 1
+
+
+def test_smt_with_reference_and_no_lookahead():
+    base = synthetic.make_bars(3000, seed=31)
+    ref = synthetic.make_bars(3000, seed=32)
+    ref["ts"] = base["ts"]
+    b = Bars.from_frame(base, "A", "M5", content_sha256="a")
+    r = Bars.from_frame(ref, "B", "M5", content_sha256="b")
+    full = REGISTRY["smt"].compute(b, ref="B", lookback=20, _ctx={"SYM:B": r})
+    assert full["bull"].sum() > 0 and full["bear"].sum() > 0
+    part = REGISTRY["smt"].compute(b.slice(0, 1500), ref="B", lookback=20, _ctx={"SYM:B": r})
+    np.testing.assert_array_equal(part["bull"], full["bull"][:1500])
+    # la référence ne fait pas de plus bas quand le marché en fait un
+    i = int(np.flatnonzero(full["bull"])[0])
+    assert b.low[i] < b.low[i - 20:i].min() and r.low[i] >= r.low[i - 20:i].min()
+    none = REGISTRY["smt"].compute(b, ref="B", lookback=20, _ctx={})
+    assert none["bull"].sum() == 0  # référence absente : indisponible
+
+
+def test_smt_cache_and_validation():
+    from qlab.genome import model
+    g = {"schema": "qlab.genome/1.0", "market": {"symbol": "XAUUSD", "timeframe": "M5"},
+         "entry": {"long": {"id": "n1", "op": "event", "ref": {"feature": "smt", "params": {"ref": "XAGUSD", "lookback": 20},
+                                                                 "output": "bull"}}, "short": None},
+         "exit": {"stop": {"type": "atr", "period": 14, "mult": 2.0}, "target": None, "break_even": None, "trailing": None,
+                  "time_stop_bars": None, "exit_on_opposite": False}, "sizing": {"risk_pct": 0.5},
+         "management": {"max_trades_per_day": 3, "cooldown_bars": 0}}
+    assert model.validate(g) == []
+    assert any("XAGUSD indisponible" in e for e in model.validate(g, {"H1"}))
+    assert model.validate(g, {"SYM:XAGUSD"}) == []
+    g["entry"]["long"]["ref"]["params"]["ref"] = "XAUUSD"
+    assert any("doit différer" in e for e in model.validate(g))

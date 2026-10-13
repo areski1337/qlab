@@ -1,0 +1,7 @@
+{"schema":"qlab.genome/1.0","market":{"symbol":"XAUUSD","timeframe":"M5"},
+ "entry":{"long":{"id":"n1","op":"and","children":[
+   {"id":"n2","op":"event","ref":{"feature":"regime","params":{"trend_period":50,"confirm":3},"output":"bull_trend"}},
+   {"id":"n3","op":"compare","left":{"feature":"regime","params":{"trend_period":50,"confirm":3},"output":"confidence"},"cmp":"gt","right":{"const":60}}]},
+  "short":{"id":"n4","op":"event","ref":{"feature":"regime","params":{"trend_period":50,"confirm":3},"output":"bear_trend"}}},
+ "exit":{"stop":{"type":"atr","period":14,"mult":2.0},"target":{"type":"rr","rr":1.5},"break_even":null,"trailing":null,"time_stop_bars":48,"exit_on_opposite":true},
+ "sizing":{"risk_pct":0.5},"management":{"max_trades_per_day":2,"cooldown_bars":6}}

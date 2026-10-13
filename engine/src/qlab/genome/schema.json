@@ -72,9 +72,9 @@
     "ref": {
       "type": "object", "additionalProperties": false, "required": ["feature", "params", "output"],
       "properties": {
-        "feature": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+        "feature": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"},
         "params": {"type": "object"},
-        "output": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+        "output": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"},
         "tf": {"enum": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]},
         "shift": {"type": "integer", "minimum": 0, "maximum": 50}
       }

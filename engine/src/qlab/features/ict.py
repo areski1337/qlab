@@ -239,3 +239,147 @@ def f_range_pos(b, lookback):
         v = np.where(hh > ll, (b.close - ll) / (hh - ll) * 100, 50.0)
     v[np.isnan(hh)] = np.nan
     return {"value": v}
+
+
+# ------------------------------------------------------------------ itération 2 : Judas, PO3, SMT, Mitigation
+from .sessions import in_session  # noqa: E402
+
+
+def _ny_minutes(ts):
+    loc = pd.to_datetime(ts, unit="s", utc=True).tz_convert("America/New_York")
+    return (loc.hour * 60 + loc.minute).to_numpy()
+
+
+@feature("judas", "1.0", "ict",
+         "Judas Swing : range asiatique (bars dont la clôture est dans asia_kz, 20:00-00:00 NY) de la journée de "
+         "trading ; complet à la fin de la session (sorties NaN avant). Pendant london_kz (02:00-05:00 NY) : "
+         "judas_bull si low < bas asiatique - sweep_atr × ATR(14) et clôture > bas asiatique (faux départ "
+         "baissier) ; judas_bear symétrique. Un seul événement par journée.",
+         {"sweep_atr": P("float", 0.0, 2.0, 0.0)},
+         {"asian_high": "price", "asian_low": "price", "judas_bull": "bool", "judas_bear": "bool"})
+def f_judas(b, sweep_atr):
+    n = len(b)
+    day = trading_day(b.ts)
+    asia = in_session(b.ts_close, "asia_kz")
+    ldn = in_session(b.ts_close, "london_kz")
+    atr = atr_arr(b, 14)
+    ah, al = np.full(n, np.nan), np.full(n, np.nan)
+    jb, js = np.zeros(n), np.zeros(n)
+    cur, hi, lo, seen, done, fired = None, -np.inf, np.inf, False, False, False
+    for i in range(n):
+        if day[i] != cur:
+            cur, hi, lo, seen, done, fired = day[i], -np.inf, np.inf, False, False, False
+        if asia[i]:
+            if done:  # une seconde fenêtre asiatique dans la même journée n'existe pas : ignorée
+                pass
+            else:
+                hi, lo, seen = max(hi, b.high[i]), min(lo, b.low[i]), True
+        elif seen:
+            done = True
+        if done:
+            ah[i], al[i] = hi, lo
+            if ldn[i] and not fired and atr[i] == atr[i]:
+                if b.low[i] < lo - sweep_atr * atr[i] and b.close[i] > lo:
+                    jb[i], fired = 1, True
+                elif b.high[i] > hi + sweep_atr * atr[i] and b.close[i] < hi:
+                    js[i], fired = 1, True
+    return {"asian_high": ah, "asian_low": al, "judas_bull": jb, "judas_bear": js}
+
+
+@feature("po3", "1.0", "ict",
+         "Power of Three : ouverture de minuit New York (première barre de la journée de trading ouverte à "
+         "00:00 NY ou après). Manipulation baissière : low <= ouverture - manip_atr × ATR(14) ; puis distribution "
+         "haussière confirmée par une clôture > ouverture → po3_bull vrai jusqu'à la fin de la journée. Symétrique "
+         "pour po3_bear. La première confirmation de la journée l'emporte.",
+         {"manip_atr": P("float", 0.1, 3.0, 0.5)},
+         {"midnight_open": "price", "po3_bull": "bool", "po3_bear": "bool"})
+def f_po3(b, manip_atr):
+    n = len(b)
+    day = trading_day(b.ts)
+    nym = _ny_minutes(b.ts)
+    atr = atr_arr(b, 14)
+    mo = np.full(n, np.nan)
+    pb, ps = np.zeros(n), np.zeros(n)
+    cur, op, down, up, state = None, np.nan, False, False, 0
+    for i in range(n):
+        if day[i] != cur:
+            cur, op, down, up, state = day[i], np.nan, False, False, 0
+        if op != op and nym[i] < 17 * 60:  # après minuit NY (heures 00:00-16:59 de la journée de trading)
+            op = b.open[i]
+        if op == op:
+            mo[i] = op
+            if state == 0 and atr[i] == atr[i]:
+                if b.low[i] <= op - manip_atr * atr[i]:
+                    down = True
+                if b.high[i] >= op + manip_atr * atr[i]:
+                    up = True
+                if down and b.close[i] > op:
+                    state = 1
+                elif up and b.close[i] < op:
+                    state = -1
+            pb[i], ps[i] = float(state == 1), float(state == -1)
+    return {"midnight_open": mo, "po3_bull": pb, "po3_bear": ps}
+
+
+@feature("smt", "1.0", "ict",
+         "SMT divergence avec un instrument de référence corrélé (même timeframe, barres appariées par horodatage) : "
+         "smt_bull si le marché fait un plus bas sur `lookback` barres (low < min des lookback précédents) alors "
+         "que la référence n'en fait pas ; smt_bear symétrique sur les hauts. Référence absente : sorties fausses "
+         "(indisponible, jamais supposée).",
+         {"ref": Param("symbol", default="XAGUSD"), "lookback": P("int", 5, 200, 20)},
+         {"bull": "bool", "bear": "bool"}, needs_context=True)
+def f_smt(b, ref, lookback, _ctx=None):
+    n = len(b)
+    r = (_ctx or {}).get(f"SYM:{ref}")
+    z = np.zeros(n)
+    if r is None or r.timeframe != b.timeframe:
+        return {"bull": z, "bear": z.copy()}
+    k = np.searchsorted(r.ts, b.ts)
+    k = np.clip(k, 0, len(r) - 1)
+    ok = r.ts[k] == b.ts
+    rl, rh = np.where(ok, r.low[k], np.nan), np.where(ok, r.high[k], np.nan)
+    pl = pd.Series(b.low).rolling(lookback).min().shift(1).to_numpy()
+    ph = pd.Series(b.high).rolling(lookback).max().shift(1).to_numpy()
+    rpl = pd.Series(rl).rolling(lookback).min().shift(1).to_numpy()  # NaN si une barre de référence manque
+    rph = pd.Series(rh).rolling(lookback).max().shift(1).to_numpy()
+    with np.errstate(invalid="ignore"):
+        bull = (b.low < pl) & (rl >= rpl)
+        bear = (b.high > ph) & (rh <= rph)
+    return {"bull": bull.astype(float), "bear": bear.astype(float)}
+
+
+@feature("mitigation", "1.0", "ict",
+         "Mitigation Block : à un BOS baissier (clôture) précédé d'un ÉCHEC de swing (dernier swing high confirmé "
+         "< swing high confirmé précédent), la dernière bougie haussière des `lookback` barres forme une zone "
+         "[low, high] ; retest par le bas (high >= bas et clôture <= haut) → bear_retest. Symétrique (higher low, "
+         "BOS haussier, dernière bougie baissière) → bull_retest. Moteur de zones commun (première touche, expiration).",
+         {**SWING, "lookback": P("int", 2, 50, 10), "expiry": P("int", 5, 500, 150)},
+         {"bull_retest": "bool", "bear_retest": "bool"})
+def f_mitigation(b, left, right, lookback, expiry):
+    n = len(b)
+    lh, ll, ch, cl = pivots(b, left, right)
+    st = structure_arrays(b, left, right, "close", 0.0)
+    # niveau du swing confirmé précédent (avant la dernière confirmation), à chaque barre
+    prev_h, prev_l = np.full(n, np.nan), np.full(n, np.nan)
+    ph = pl = np.nan
+    last_h = last_l = np.nan
+    for i in range(n):
+        if ch[i]:
+            ph, last_h = last_h, lh[i]
+        if cl[i]:
+            pl, last_l = last_l, ll[i]
+        prev_h[i], prev_l[i] = ph, pl
+    bear_c, bull_c = b.close < b.open, b.close > b.open
+    cr: dict[int, list] = {}
+    for i in np.flatnonzero(st["bos_up"]):
+        if i > 0 and ll[i - 1] == ll[i - 1] and prev_l[i - 1] == prev_l[i - 1] and ll[i - 1] > prev_l[i - 1]:
+            js = [j for j in range(i - 1, max(-1, i - 1 - lookback), -1) if bear_c[j]]
+            if js:
+                cr.setdefault(int(i), []).append((1, b.low[js[0]], b.high[js[0]]))
+    for i in np.flatnonzero(st["bos_down"]):
+        if i > 0 and lh[i - 1] == lh[i - 1] and prev_h[i - 1] == prev_h[i - 1] and lh[i - 1] < prev_h[i - 1]:
+            js = [j for j in range(i - 1, max(-1, i - 1 - lookback), -1) if bull_c[j]]
+            if js:
+                cr.setdefault(int(i), []).append((-1, b.low[js[0]], b.high[js[0]]))
+    ev = _zones(n, cr, b, expiry)
+    return {"bull_retest": ev["bull_retest"], "bear_retest": ev["bear_retest"]}

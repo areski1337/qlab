@@ -19,7 +19,7 @@ from ..genome import model
 from .window import feature_window
 
 GENERATOR_VERSION = COMPONENT_VERSIONS["mql5_generator"]
-SUPPORTED = {n for n in REGISTRY} - {"regime"}  # régimes : médiane glissante trop coûteuse en testeur (v1)
+SUPPORTED = set(REGISTRY)  # régimes exportables depuis regime 1.1 (moyenne glissante de spread)
 TF_ENUM = {"M1": "PERIOD_M1", "M5": "PERIOD_M5", "M15": "PERIOD_M15", "M30": "PERIOD_M30", "H1": "PERIOD_H1",
            "H4": "PERIOD_H4", "D1": "PERIOD_D1"}
 ZONE = {"America/New_York": 0, "Europe/London": 1, "Asia/Tokyo": 2}
@@ -54,9 +54,12 @@ class _Ctx:
         self.tfs: list[str] = [base_tf]
         self.max_shift = 0
         self.windows: dict[str, int] = {base_tf: 3}
+        self.refs: dict[str, str] = {}  # symbole de référence (SMT) -> variable de barres
 
     def inst(self, r: dict) -> str:
         tf = r.get("tf") or self.base_tf
+        if REGISTRY[r["feature"]].needs_context and r["params"]["ref"] not in self.refs:
+            self.refs[r["params"]["ref"]] = f"g_bR{len(self.refs)}"
         key = (r["feature"], repr(sorted(r["params"].items())), tf)
         if key not in self.instances:
             self.instances[key] = (f"I{len(self.instances)}", r["params"])
@@ -114,7 +117,7 @@ def _computable(node: dict, c: _Ctx) -> str:
     return "(" + " && ".join(parts or ["true"]) + ")"
 
 
-def _call(feature: str, params: dict, inst: str, bars: str) -> str:
+def _call(feature: str, params: dict, inst: str, bars: str, refs: dict | None = None) -> str:
     spec = REGISTRY[feature]
     outs = ", ".join(f"{inst}_{o}" for o in spec.outputs)
     if feature == "session":
@@ -124,6 +127,8 @@ def _call(feature: str, params: dict, inst: str, bars: str) -> str:
     elif feature == "structure":
         args = [str(params["left"]), str(params["right"]), "1" if params["break_on"] == "close" else "0",
                 repr(float(params["disp_atr"]))]
+    elif feature == "smt":
+        return f"   F_smt({bars}, {refs[params['ref']]}, {int(params['lookback'])}, {outs});"
     elif feature == "vwap":
         args = ["1" if params["anchor"] == "week" else "0", "0", repr(float(params["dev"]))]
     else:
@@ -175,10 +180,13 @@ def generate(rev: dict, symbol: str, tz_profile: str, limits: dict, limits_sha: 
     decls, calls = [], []
     for (feat, _, tf), (inst, params) in c.instances.items():
         decls.append(f"double {', '.join(f'{inst}_{o}[]' for o in REGISTRY[feat].outputs)};   // {feat}{params} [{tf}]")
-        calls.append(_call(feat, params, inst, c.bars(tf)))
+        calls.append(_call(feat, params, inst, c.bars(tf), c.refs))
     loads = "\n".join(f"   if(!QL_Load(_Symbol, {TF_ENUM[tf]}, {c.windows[tf]}, {c.bars(tf)})) return false;"
                       for tf in c.tfs)
-    bars_decl = "QLBars " + ", ".join(c.bars(tf) for tf in c.tfs) + ";"
+    for sym, var in c.refs.items():  # instrument de référence SMT : même timeframe que l'exécution
+        loads += f'\n   if(!QL_Load("{sym}", {TF_ENUM[c.base_tf]}, {c.windows[c.base_tf]}, {var})) return false;'
+    
+    bars_decl = "QLBars " + ", ".join([c.bars(tf) for tf in c.tfs] + list(c.refs.values())) + ";"
     tz_mode, tz_fixed = (0, 0) if tz_profile == "UTC" else (2, 0) if tz_profile == "NY+7" else (1, int(tz_profile[3:]) * 3600)
     magic = zlib.crc32(rev["semantic_hash"].encode()) & 0x7FFFFFFF
     W = max(c.windows.values())

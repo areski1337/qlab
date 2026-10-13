@@ -29,10 +29,12 @@ SESSION_NAMES = REGISTRY["session"].params["name"].choices
 HTF = {"M1": ["M15", "H1"], "M5": ["H1", "H4"], "M15": ["H1", "H4"], "M30": ["H4"], "H1": ["H4"], "H4": []}
 
 
-def rand_params(rng: random.Random, name: str) -> dict:
+def rand_params(rng: random.Random, name: str, refs=()) -> dict:
     out = {}
     for k, p in REGISTRY[name].params.items():
-        if p.kind == "choice":
+        if p.kind == "symbol":
+            out[k] = rng.choice(list(refs))
+        elif p.kind == "choice":
             out[k] = rng.choice(p.choices)
         elif p.kind == "int":
             # tirage log-uniforme autour des valeurs usuelles
@@ -60,11 +62,16 @@ def random_leaf(rng: random.Random, base_tf: str, side: int, htfs=()) -> dict:
     htf = [t for t in HTF.get(base_tf, []) if t in htfs]
     kind = rng.random()
     if kind < 0.35:  # événement booléen
-        bools = [(n, o) for n, s in REGISTRY.items() for o, k in s.outputs.items() if k == "bool"]
+        refs = [x[4:] for x in htfs if x.startswith("SYM:")]
+        # features à instrument de référence (SMT) : seulement si une référence est chargée dans le contexte
+        bools = [(n, o) for n, s in REGISTRY.items() for o, k in s.outputs.items()
+                 if k == "bool" and (refs or not s.needs_context)]
         n, o = rng.choice(bools)
         if n == "session":
             return {"id": "n0", "op": "event", "ref": {"feature": "session", "params": {"name": rng.choice(SESSION_NAMES)},
                                                          "output": "active"}}
+        if REGISTRY[n].needs_context:
+            return {"id": "n0", "op": "event", "ref": {"feature": n, "params": rand_params(rng, n, refs), "output": o}}
         return {"id": "n0", "op": "event", "ref": ref(rng, n, o, htf if n != "session" else ())}
     if kind < 0.7:  # oscillateur/ratio contre constante
         (n, o), (lo, hi) = rng.choice(list(CONST_COMPARABLE.items()))
@@ -131,7 +138,10 @@ def m_param(rng, g, htfs=()):
     if not refs:
         return None
     r = rng.choice(refs)
-    k = rng.choice(list(REGISTRY[r["feature"]].params))
+    keys = [k for k, p in REGISTRY[r["feature"]].params.items() if p.kind != "symbol"]
+    if not keys:
+        return None
+    k = rng.choice(keys)
     p = REGISTRY[r["feature"]].params[k]
     if p.kind == "choice":
         r["params"][k] = rng.choice(p.choices)

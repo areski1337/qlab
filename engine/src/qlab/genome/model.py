@@ -113,6 +113,13 @@ def validate(g: dict, available_tfs: set[str] | None = None) -> list[str]:
             errs.append(f"ref {r['feature']}: timeframe {tf} inférieur au timeframe d'exécution {base_tf}")
         if tf and tf != base_tf and available_tfs is not None and tf not in available_tfs:
             errs.append(f"ref {r['feature']}: données {tf} indisponibles")
+        spec = REGISTRY.get(r["feature"])
+        if spec and spec.needs_context and available_tfs is not None and f"SYM:{r['params'].get('ref')}" not in available_tfs:
+            errs.append(f"ref {r['feature']}: instrument de référence {r['params'].get('ref')} indisponible")
+        if spec and spec.needs_context and r["params"].get("ref") == g["market"]["symbol"]:
+            errs.append(f"ref {r['feature']}: l'instrument de référence doit différer du marché exécuté")
+        if spec and spec.needs_context and tf and tf != base_tf:
+            errs.append(f"ref {r['feature']}: SMT seulement sur le timeframe d'exécution")
     return errs
 
 

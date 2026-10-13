@@ -14,6 +14,7 @@ Types de sortie (pour le typage des comparaisons dans le génome) :
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -24,7 +25,7 @@ from ..core.hashing import sha256_json
 
 @dataclass(frozen=True)
 class Param:
-    kind: str  # "int" | "float" | "choice"
+    kind: str  # "int" | "float" | "choice" | "symbol"
     lo: float | None = None
     hi: float | None = None
     default: object = None
@@ -33,6 +34,8 @@ class Param:
     def validate(self, v) -> str | None:
         if self.kind == "choice":
             return None if v in self.choices else f"valeur {v!r} hors de {self.choices}"
+        if self.kind == "symbol":
+            return None if isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9._#-]{1,32}", v) else f"symbole invalide {v!r}"
         if self.kind == "int" and (not isinstance(v, int) or isinstance(v, bool)):
             return f"entier attendu, reçu {v!r}"
         if self.kind == "float" and not isinstance(v, (int, float)):
@@ -52,15 +55,17 @@ class FeatureSpec:
     outputs: dict[str, str]  # sortie -> type
     compute: Callable = field(compare=False)
     approximate: str | None = None  # limite connue (ex. VWAP en tick volume)
+    needs_context: bool = False     # reçoit le contexte (instrument de référence « SYM:<symbole> »)
 
 
 REGISTRY: dict[str, FeatureSpec] = {}
 
 
 def feature(name: str, version: str, family: str, description: str, params: dict[str, Param],
-            outputs: dict[str, str], approximate: str | None = None):
+            outputs: dict[str, str], approximate: str | None = None, needs_context: bool = False):
     def deco(fn):
-        REGISTRY[name] = FeatureSpec(name, version, family, description, params, outputs, fn, approximate)
+        REGISTRY[name] = FeatureSpec(name, version, family, description, params, outputs, fn, approximate,
+                                     needs_context)
         return fn
     return deco
 
@@ -91,7 +96,11 @@ class FeatureCache:
 
     def key(self, name: str, params: dict, tf: str | None) -> str:
         b = self.context[tf] if tf and tf != self.bars.timeframe else self.bars
-        return sha256_json([b.content_sha256, b.timeframe, len(b), name, REGISTRY[name].version, params])
+        ref = None
+        if REGISTRY[name].needs_context:
+            r = self.context.get(f"SYM:{params.get('ref')}")
+            ref = r.content_sha256 if r is not None else None
+        return sha256_json([b.content_sha256, b.timeframe, len(b), name, REGISTRY[name].version, params, ref])
 
     def get(self, name: str, params: dict, tf: str | None = None) -> dict[str, np.ndarray]:
         k = self.key(name, params, tf)
@@ -100,7 +109,8 @@ class FeatureCache:
             return self._d[k]
         self.misses += 1
         b = self.context[tf] if tf and tf != self.bars.timeframe else self.bars
-        out = REGISTRY[name].compute(b, **params)
+        spec = REGISTRY[name]
+        out = spec.compute(b, **params, _ctx=self.context) if spec.needs_context else spec.compute(b, **params)
         if len(self._d) >= self.max_items:
             self._d.pop(next(iter(self._d)))
         self._d[k] = out

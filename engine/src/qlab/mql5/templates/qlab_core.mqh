@@ -98,7 +98,7 @@ bool QL_Load(const string sym, const ENUM_TIMEFRAMES tf, const int W, QLBars &b)
    MqlRates r[];
    ArraySetAsSeries(r, false);
    int got = CopyRates(sym, tf, 1, W, r);     // position 1 : la barre en formation est exclue
-   if(got < W) return false;                  // historique insuffisant : aucun signal (prudence)
+   if(got < W) { SymbolSelect(sym, true); return false; }  // historique insuffisant : aucun signal (prudence)
    b.n = got;
    b.tfsec = PeriodSeconds(tf);
    ArrayResize(b.o, got); ArrayResize(b.h, got); ArrayResize(b.l, got); ArrayResize(b.c, got);
@@ -583,6 +583,200 @@ void F_range_position(QLBars &b, const int lookback, double &value[])
    {
       if(!QL_OK(hh[i]) || !QL_OK(ll[i])) continue;
       value[i] = hh[i] > ll[i] ? (b.c[i] - ll[i]) / (hh[i] - ll[i]) * 100.0 : 50.0;
+   }
+}
+// ---------------------------------------------------------------- itération 2 : Judas, PO3, SMT, Mitigation
+void F_judas(QLBars &b, const double sweep_atr, double &asian_high[], double &asian_low[], double &judas_bull[], double &judas_bear[])
+{
+   int N = b.n;
+   double atr[];
+   QL_ATR(b, 14, atr);
+   QL_Init(asian_high, N, QL_NAN); QL_Init(asian_low, N, QL_NAN); QL_Init(judas_bull, N, 0); QL_Init(judas_bear, N, 0);
+   long cur = -999999;
+   double hi = -DBL_MAX, lo = DBL_MAX;
+   bool seen = false, done = false, fired = false;
+   for(int i = 0; i < N; i++)
+   {
+      long d = QL_TradingDay(b.t[i]);
+      if(d != cur) { cur = d; hi = -DBL_MAX; lo = DBL_MAX; seen = false; done = false; fired = false; }
+      bool asia = QL_InSession(b.t[i] + b.tfsec, 0, 1200, 0);
+      bool ldn = QL_InSession(b.t[i] + b.tfsec, 0, 120, 300);
+      if(asia) { if(!done) { hi = MathMax(hi, b.h[i]); lo = MathMin(lo, b.l[i]); seen = true; } }
+      else if(seen) done = true;
+      if(done)
+      {
+         asian_high[i] = hi; asian_low[i] = lo;
+         if(ldn && !fired && QL_OK(atr[i]))
+         {
+            if(b.l[i] < lo - sweep_atr * atr[i] && b.c[i] > lo) { judas_bull[i] = 1; fired = true; }
+            else if(b.h[i] > hi + sweep_atr * atr[i] && b.c[i] < hi) { judas_bear[i] = 1; fired = true; }
+         }
+      }
+   }
+}
+
+void F_po3(QLBars &b, const double manip_atr, double &midnight_open[], double &po3_bull[], double &po3_bear[])
+{
+   int N = b.n;
+   double atr[];
+   QL_ATR(b, 14, atr);
+   QL_Init(midnight_open, N, QL_NAN); QL_Init(po3_bull, N, 0); QL_Init(po3_bear, N, 0);
+   long cur = -999999;
+   double op = QL_NAN;
+   bool down = false, up = false;
+   int state = 0;
+   for(int i = 0; i < N; i++)
+   {
+      long d = QL_TradingDay(b.t[i]);
+      if(d != cur) { cur = d; op = QL_NAN; down = false; up = false; state = 0; }
+      if(!QL_OK(op) && QL_LocalMinutes(b.t[i], 0) < 1020) op = b.o[i];
+      if(QL_OK(op))
+      {
+         midnight_open[i] = op;
+         if(state == 0 && QL_OK(atr[i]))
+         {
+            if(b.l[i] <= op - manip_atr * atr[i]) down = true;
+            if(b.h[i] >= op + manip_atr * atr[i]) up = true;
+            if(down && b.c[i] > op) state = 1;
+            else if(up && b.c[i] < op) state = -1;
+         }
+         po3_bull[i] = state == 1 ? 1 : 0; po3_bear[i] = state == -1 ? 1 : 0;
+      }
+   }
+}
+
+void F_mitigation(QLBars &b, const int left, const int right, const int lookback, const int expiry, double &bull_retest[], double &bear_retest[])
+{
+   int N = b.n;
+   double lh[], ll[], ch[], cl[], bu[], bd[], cu[], cd[], mu[], md[], tr[];
+   QL_Pivots(b, left, right, lh, ll, ch, cl);
+   QL_Structure(b, left, right, 1, 0.0, bu, bd, cu, cd, mu, md, tr);
+   double prev_h[], prev_l[];
+   QL_Init(prev_h, N, QL_NAN); QL_Init(prev_l, N, QL_NAN);
+   double ph = QL_NAN, pl = QL_NAN, last_h = QL_NAN, last_l = QL_NAN;
+   for(int i = 0; i < N; i++)
+   {
+      if(ch[i] == 1) { ph = last_h; last_h = lh[i]; }
+      if(cl[i] == 1) { pl = last_l; last_l = ll[i]; }
+      prev_h[i] = ph; prev_l[i] = pl;
+   }
+   int ci[], cdir[]; double clo[], chi[]; int nc = 0;
+   ArrayResize(ci, 2 * N); ArrayResize(cdir, 2 * N); ArrayResize(clo, 2 * N); ArrayResize(chi, 2 * N);
+   for(int pass = 0; pass < 2; pass++)
+      for(int i = 1; i < N; i++)
+      {
+         bool ok;
+         if(pass == 0) ok = bu[i] == 1 && QL_OK(ll[i - 1]) && QL_OK(prev_l[i - 1]) && ll[i - 1] > prev_l[i - 1];
+         else          ok = bd[i] == 1 && QL_OK(lh[i - 1]) && QL_OK(prev_h[i - 1]) && lh[i - 1] < prev_h[i - 1];
+         if(!ok) continue;
+         for(int j = i - 1; j >= MathMax(0, i - lookback); j--)
+         {
+            bool hit = pass == 0 ? (b.c[j] < b.o[j]) : (b.c[j] > b.o[j]);
+            if(hit) { ci[nc] = i; cdir[nc] = pass == 0 ? 1 : -1; clo[nc] = b.l[j]; chi[nc] = b.h[j]; nc++; break; }
+         }
+      }
+   QL_SortCreations(ci, cdir, clo, chi, nc);
+   double ib[], is[];
+   QL_Zones(b, ci, cdir, clo, chi, nc, expiry, bull_retest, bear_retest, ib, is);
+}
+
+// Index de la barre de référence de même horodatage, -1 sinon.
+int QL_FindTs(QLBars &r, const long t)
+{
+   int lo = 0, hi = r.n - 1;
+   while(lo <= hi)
+   {
+      int mid = (lo + hi) / 2;
+      if(r.t[mid] == t) return mid;
+      if(r.t[mid] < t) lo = mid + 1; else hi = mid - 1;
+   }
+   return -1;
+}
+
+void F_smt(QLBars &b, QLBars &r, const int lookback, double &bull[], double &bear[])
+{
+   int N = b.n;
+   QL_Init(bull, N, 0); QL_Init(bear, N, 0);
+   for(int i = MathMax(lookback, N - QL_K); i < N; i++)
+   {
+      double pl = DBL_MAX, ph = -DBL_MAX, rpl = DBL_MAX, rph = -DBL_MAX;
+      bool ok = true;
+      int ki = QL_FindTs(r, b.t[i]);
+      if(ki < 0) continue;
+      for(int k = i - lookback; k < i; k++)
+      {
+         pl = MathMin(pl, b.l[k]); ph = MathMax(ph, b.h[k]);
+         int q = QL_FindTs(r, b.t[k]);
+         if(q < 0) { ok = false; break; }
+         rpl = MathMin(rpl, r.l[q]); rph = MathMax(rph, r.h[q]);
+      }
+      if(!ok) continue;
+      if(b.l[i] < pl && r.l[ki] >= rpl) bull[i] = 1;
+      if(b.h[i] > ph && r.h[ki] <= rph) bear[i] = 1;
+   }
+}
+// ---------------------------------------------------------------- régimes v1.1 (miroir de qlab.regime.engine)
+void F_regime(QLBars &b, const int trend_period, const int confirm,
+              double &bull_trend[], double &bear_trend[], double &range_[], double &compression[], double &expansion[],
+              double &transition[], double &disturbed[], double &confidence[], double &trend_slope[], double &vol_ratio[])
+{
+   int N = b.n;
+   double adx[], pdi[], mdi[], e[], a14[], a5[], a50[];
+   F_adx(b, 14, adx, pdi, mdi);
+   QL_EMA(b.c, N, trend_period, e);
+   QL_ATR(b, 14, a14); QL_ATR(b, 5, a5); QL_ATR(b, 50, a50);
+   QL_Init(trend_slope, N, QL_NAN); QL_Init(vol_ratio, N, QL_NAN);
+   int raw[]; ArrayResize(raw, N);
+   double sum = 0; int cnt = 0;   // moyenne glissante des spreads > 0 sur 100 barres
+   for(int i = 0; i < N; i++)
+   {
+      if(b.sp[i] > 0) { sum += b.sp[i]; cnt++; }
+      if(i >= 100 && b.sp[i - 100] > 0) { sum -= b.sp[i - 100]; cnt--; }
+      double mean = cnt >= 20 ? sum / cnt : QL_NAN;
+      if(i >= 5 && QL_OK(e[i]) && QL_OK(e[i - 5]) && QL_OK(a14[i]) && a14[i] != 0) trend_slope[i] = (e[i] - e[i - 5]) / (a14[i] * 5);
+      if(QL_OK(a5[i]) && QL_OK(a50[i]) && a50[i] != 0) vol_ratio[i] = a5[i] / a50[i];
+      bool dist = (QL_OK(a50[i]) && (b.h[i] - b.l[i]) > 4 * a50[i]) || (b.sp[i] > 0 && QL_OK(mean) && b.sp[i] > 3 * mean);
+      bool known = QL_OK(adx[i]) && QL_OK(trend_slope[i]) && QL_OK(vol_ratio[i]);
+      int r = known ? 5 : -1;
+      if(known)
+      {
+         double s = trend_slope[i], c = vol_ratio[i];
+         if(dist) r = 6;
+         else if(c < 0.7) r = 3;
+         else if(c > 1.5) r = 4;
+         else if(adx[i] > 25 && s > 0.1) r = 0;
+         else if(adx[i] > 25 && s < -0.1) r = 1;
+         else if(adx[i] < 20) r = 2;
+      }
+      raw[i] = r;
+   }
+   int cur[]; ArrayResize(cur, N);
+   int state = -1, pend = -1, cntp = 0;
+   for(int i = 0; i < N; i++)
+   {
+      int r = raw[i];
+      if(r == -1) { state = -1; pend = -1; cntp = 0; }
+      else if(state == -1) state = r;
+      else if(r != state)
+      {
+         cntp = (r == pend) ? cntp + 1 : 1;
+         pend = r;
+         if(cntp >= confirm) { state = r; pend = -1; cntp = 0; }
+      }
+      else { pend = -1; cntp = 0; }
+      cur[i] = state;
+   }
+   QL_Init(bull_trend, N, 0); QL_Init(bear_trend, N, 0); QL_Init(range_, N, 0); QL_Init(compression, N, 0);
+   QL_Init(expansion, N, 0); QL_Init(transition, N, 0); QL_Init(disturbed, N, 0); QL_Init(confidence, N, QL_NAN);
+   int w = 3 * confirm;
+   for(int i = 0; i < N; i++)
+   {
+      bull_trend[i] = cur[i] == 0 ? 1.0 : 0.0; bear_trend[i] = cur[i] == 1 ? 1.0 : 0.0; range_[i] = cur[i] == 2 ? 1.0 : 0.0; compression[i] = cur[i] == 3 ? 1.0 : 0.0;
+      expansion[i] = cur[i] == 4 ? 1.0 : 0.0; transition[i] = cur[i] == 5 ? 1.0 : 0.0; disturbed[i] = cur[i] == 6 ? 1.0 : 0.0;
+      if(cur[i] < 0 || i < N - QL_K) continue;
+      double m = 0; int k = 0;
+      for(int j = MathMax(0, i - w + 1); j <= i; j++) { m += (raw[j] == cur[i]) ? 1 : 0; k++; }
+      confidence[i] = m / k * 100.0;
    }
 }
 // ===================== fin de la bibliothèque QLab =====================
