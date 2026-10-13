@@ -25,5 +25,35 @@
   "dependencies": {
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
+  },
+  "build": {
+    "appId": "local.qlab.desktop",
+    "productName": "QLab",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**",
+      "dist/renderer/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../engine",
+        "to": "engine",
+        "filter": [
+          "pyproject.toml",
+          "uv.lock",
+          ".python-version",
+          "README.md",
+          "src/**",
+          "!**/__pycache__/**"
+        ]
+      }
+    ],
+    "win": {
+      "target": "dir"
+    },
+    "asar": true
   }
 }

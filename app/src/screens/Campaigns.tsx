@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Badge, Btn, Card, Err, Field, fmt, Json, LineChart, Scatter, Table, useAction, useApi } from "../ui";
 import { useNav } from "../main";
@@ -96,6 +96,7 @@ export function Campaigns() {
 function CampaignPicker() {
   const { nav, go } = useNav();
   const camps = useApi<any[]>("/campaigns", [], true);
+  useEffect(() => { if (!nav.campaign && camps.data?.length) go({ ...nav, campaign: camps.data[0].id }); }, [camps.data]);
   return (
     <select value={nav.campaign ?? ""} onChange={(e) => go({ ...nav, campaign: e.target.value })}>
       <option value="">— campagne —</option>

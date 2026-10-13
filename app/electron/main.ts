@@ -32,7 +32,10 @@ function startEngine(): Promise<void> {
     const dir = engineDir();
     const args = ["run", "--project", dir, "python", "-m", "qlab.api.app"];
     if (process.env.QLAB_DATA_DIR) args.push("--data-dir", process.env.QLAB_DATA_DIR);
-    engine = spawn("uv", args, { cwd: dir, env: { ...process.env, QLAB_API_TOKEN: TOKEN }, windowsHide: true });
+    const env: NodeJS.ProcessEnv = { ...process.env, QLAB_API_TOKEN: TOKEN };
+    // Application empaquetée : l'environnement Python vit dans le profil utilisateur (dossier d'installation en lecture seule).
+    if (app.isPackaged) env.UV_PROJECT_ENVIRONMENT = path.join(app.getPath("userData"), "engine-venv");
+    engine = spawn("uv", args, { cwd: dir, env, windowsHide: true });
     const timer = setTimeout(() => reject(new Error("le moteur n'a pas démarré en 120 s")), 120_000);
     engine.stdout?.on("data", (d: Buffer) => {
       const s = d.toString();

@@ -35,3 +35,6 @@ La médiane glissante de spread du détecteur de régimes est trop coûteuse bar
 
 ### ADR-012 — Fermeture du terminal lancé par QLab
 Le paquet MetaTrader5 laisse le terminal ouvert après `shutdown()`. Une session de lecture qui a lancé le terminal le referme proprement (WM_CLOSE) ; un terminal déjà ouvert par l'utilisateur n'est jamais fermé. Le Strategy Tester en ligne de commande exige un terminal fermé : sinon statut `blocked`.
+
+### ADR-013 — La parité rejoue la référence dans les conditions du testeur
+La comparaison vise la logique d'exécution, pas les hypothèses de coûts de recherche. La référence est donc rejouée avec : spread des barres, commission **observée** dans les deals du testeur, glissement nul (le testeur tourne en `ExecutionMode=0`, sans latence). Constaté sur un génome du GA : avec le glissement de recherche (2 pts) conservé, écart systématique de 2 pts par trade et note C malgré 100 % de signaux et de trades concordants. Les coûts utilisés figurent dans chaque rapport (`reference_costs`).

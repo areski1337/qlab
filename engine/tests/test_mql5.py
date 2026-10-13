@@ -85,3 +85,51 @@ def test_real_metaeditor_compiles_examples(tmp_path):
         comp = toolchain.compile_ea(lab, ea)
         assert comp["status"] == "succeeded" and comp["errors"] == 0, comp["diagnostic"]
     lab.close()
+
+
+def _trace_from_reference(res, bars, sig, i0, drop_trades=0, flip_signals=0):
+    """Fabrique une trace au format EA à partir d'un run de référence (fixture de test, pas un run MT5)."""
+    tf = bars.tf_s
+    lines = [f"FIRST;{int(bars.ts[i0] + tf)}"]
+    lg, sh = sig
+    flipped = 0
+    for i in range(i0, len(bars)):
+        l, s = bool(lg[i]), bool(sh[i])
+        if (l or s) and flipped < flip_signals:
+            l, s, flipped = not l, not s, flipped + 1
+        if l or s:
+            lines.append(f"SIG;{int(bars.ts[i] + tf)};{int(l)};{int(s)}")
+    reason = {"stop": 4, "stop_gap": 4, "target": 5, "target_gap": 5}
+    for k, t in enumerate(res["trades"][drop_trades:]):
+        comm = -t["commission"] / 2
+        lines.append(f"DEAL;{2*k};{t['entry_ts'] + 1};{0 if t['dir'] == 1 else 1};0;{t['entry']};{t['lots']};0;{comm};0;3;{k}")
+        lines.append(f"DEAL;{2*k+1};{t['exit_ts'] + 1};{1 if t['dir'] == 1 else 0};1;{t['exit']};{t['lots']};"
+                     f"{t['gross']};{comm};{t['swap']};{reason.get(t['reason'], 3)};{k}")
+    lines.append(f"LASTBAR;{int(bars.ts[-1])}")
+    return "\n".join(lines)
+
+
+def test_parity_comparator_grades_and_blocks():  # AT-008 (logique de blocage)
+    from qlab.backtest import engine
+    from qlab.backtest.costs import DEFAULT_COST_PROFILE
+    from qlab.data.dataset import Bars
+    from qlab.features import FeatureCache
+    from qlab.genome.model import signals
+    df = synthetic.make_bars(6000, seed=12)
+    bars = Bars.from_frame(df, "SYNTH", "M5", spec=synthetic.SYNTHETIC_SPEC, content_sha256="p")
+    rev = rev_of("valid_ema_trend_rsi.json")
+    rev["content"]["market"] = {"symbol": "SYNTH", "timeframe": "M5"}
+    rev["content"]["management"]["max_trades_per_day"] = 10
+    cache = FeatureCache(bars)
+    risk = RiskController(DEFAULT_LIMITS)
+    costs = {**DEFAULT_COST_PROFILE, "commission_per_lot_side": 3.0}
+    i0 = 1000
+    res = engine.run(rev["content"], cache, {**costs, "spread_mode": "max", "fixed_spread_points": 0}, risk, start=i0)
+    assert len(res["trades"]) >= 10
+    sig = signals(rev["content"], cache)
+    good = parity.compare(parity.parse_trace(_trace_from_reference(res, bars, sig, i0), "UTC"), rev, cache, risk, 10_000, costs)
+    assert good["grade"] == "A" and not good["critical"] and good["signals"]["agreement"] == 1.0
+    assert good["trades"]["match_ratio"] == 1.0 and good["aggregate"]["net_rel_diff"] < 1e-6
+    bad = parity.compare(parity.parse_trace(_trace_from_reference(res, bars, sig, i0, drop_trades=3, flip_signals=5), "UTC"),
+                         rev, cache, risk, 10_000, costs)
+    assert bad["critical"] and bad["grade"] != "A" and not bad["reference_matched"]

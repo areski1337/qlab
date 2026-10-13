@@ -82,9 +82,12 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
     # spread des barres ; 0 hors fenêtre sans effet. Si la fenêtre contient des spreads nuls : médiane (signalé).
     win_sp = b.spread[i0:i1 + 1]
     floor = 0.0 if (win_sp > 0).all() else float(np.median(win_sp[win_sp > 0]))
+    # La référence est rejouée dans les conditions du testeur : ExecutionMode=0 (aucune latence ⇒ aucun glissement).
     costs = {**costs_base, "spread_mode": "max", "fixed_spread_points": floor, "commission_per_lot_side": comm_side,
+             "slippage_points": 0,
              "provenance": {**costs_base.get("provenance", {}), "commission": "observed_mt5_tester",
-                            "spread": "bars" if floor == 0 else "bars+median_floor"}}
+                            "spread": "bars" if floor == 0 else "bars+median_floor",
+                            "slippage": "0 : testeur ExecutionMode=0 (sans latence)"}}
     res = engine.run(rev["content"], cache, costs, risk, initial_equity=deposit, start=i0, stop=min(i1 + 1, len(b)))
     from ..genome.model import signals
     lg, sh = signals(rev["content"], cache)
@@ -158,6 +161,7 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
         "aggregate": {"net_ref": net_ref, "net_mt5": net_mt5, "net_rel_diff": net_diff,
                       "ref_metrics": {k: v for k, v in compute(res).items() if k in ("n_trades", "profit_factor",
                                                                                       "max_dd_pct", "sharpe")}},
+        "reference_costs": costs,
         "costs_observed": {"commission_per_lot_side": comm_side, "commission_total": comm,
                            "swap_total": sum(t["out"]["swap"] for t in tr["trades"])},
         "ea_skips": tr["skips"], "nohist_bars": tr["nohist"],
