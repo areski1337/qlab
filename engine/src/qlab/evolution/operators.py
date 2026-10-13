@@ -117,6 +117,96 @@ def random_genome(rng: random.Random, symbol: str, tf: str, sides: str = "both",
     return model.renumber(g)
 
 
+# ---------- bases de stratégie (points de départ structurés, paramètres tirés au hasard) ----------
+
+def _r(feature, output, tf=None, **params):
+    r = {"feature": feature, "params": params, "output": output}
+    if tf:
+        r["tf"] = tf
+    return r
+
+
+def _cmp(left, cmp, right):
+    return {"id": "n0", "op": "compare", "left": left, "cmp": cmp, "right": right}
+
+
+def _ev(ref_):
+    return {"id": "n0", "op": "event", "ref": ref_}
+
+
+_CLOSE = {"feature": "price", "params": {}, "output": "close"}
+
+
+def _base_trend(rng, side, htf):
+    up = side == 1
+    kids = [_cmp(_CLOSE, "cross_above" if up else "cross_below", _r("ema", "value", period=rng.randint(15, 60))),
+            _cmp(_r("adx", "adx", period=14), "gt", {"const": round(rng.uniform(18, 30), 1)})]
+    if htf:
+        kids.append(_cmp(_CLOSE, "gt" if up else "lt", _r("ema", "value", htf, period=rng.randint(20, 100))))
+    return kids
+
+
+def _base_reversion(rng, side, htf):
+    up = side == 1
+    lvl = round(rng.uniform(22, 35), 1)
+    return [_cmp(_r("rsi", "value", period=rng.randint(5, 21)), "lt" if up else "gt", {"const": lvl if up else 100 - lvl}),
+            _cmp(_CLOSE, "lt" if up else "gt", _r("bollinger", "lower" if up else "upper",
+                                                  period=rng.randint(15, 40), dev=round(rng.uniform(1.6, 2.6), 2)))]
+
+
+def _base_breakout(rng, side, htf):
+    up = side == 1
+    return [_cmp(_CLOSE, "cross_above" if up else "cross_below", _r("donchian", "upper" if up else "lower",
+                                                                    period=rng.randint(20, 60))),
+            _cmp(_r("compression", "value", fast=5, slow=rng.randint(40, 80)), "lt", {"const": round(rng.uniform(0.6, 1.0), 2)})]
+
+
+def _base_session(rng, side, htf):
+    up = side == 1
+    return [_ev(_r("session", "active", name=rng.choice(["london", "new_york", "ldn_ny_overlap"]))),
+            _cmp(_CLOSE, "cross_above" if up else "cross_below", _r("prev_extremes", "pdh" if up else "pdl"))]
+
+
+def _base_ict(rng, side, htf):
+    up = side == 1
+    setup = rng.choice([("fvg", "bull_retest", "bear_retest"), ("order_block", "bull_retest", "bear_retest"),
+                        ("liquidity", "sweep_low", "sweep_high"), ("judas", "judas_bull", "judas_bear")])
+    kids = [_ev(_r("session", "active", name=rng.choice(["london_kz", "asia_kz", "new_york"]))),
+            _ev({"feature": setup[0], "params": rand_params(rng, setup[0]), "output": setup[1] if up else setup[2]})]
+    if htf:
+        kids.append(_cmp(_r("structure", "trend", htf, left=3, right=3, break_on="close", disp_atr=1.0),
+                         "gt" if up else "lt", {"const": 0.0}))
+    return kids
+
+
+def _base_pullback(rng, side, htf):
+    up = side == 1
+    lvl = round(rng.uniform(35, 45), 1)
+    return [_cmp(_CLOSE, "gt" if up else "lt", _r("ema", "value", htf, period=rng.randint(100, 200))),
+            _cmp(_r("rsi", "value", period=14), "cross_above" if up else "cross_below", {"const": lvl if up else 100 - lvl})]
+
+
+BASES = {
+    "trend": ("Suivi de tendance", "croisement de moyenne mobile confirmé par l'ADX (+ filtre de tendance supérieure)", _base_trend),
+    "reversion": ("Retour à la moyenne", "RSI en excès et prix hors de la bande de Bollinger", _base_reversion),
+    "breakout": ("Cassure de range", "cassure de Donchian après compression de la volatilité", _base_breakout),
+    "session": ("Cassure de session", "session active et cassure du plus haut/bas de la veille", _base_session),
+    "ict": ("ICT / Smart Money", "kill zone + retest FVG/order block, chasse de liquidité ou Judas (+ structure supérieure)", _base_ict),
+    "pullback": ("Repli dans la tendance", "prix du bon côté d'une moyenne longue et RSI qui repart", _base_pullback),
+}
+
+
+def base_genome(rng: random.Random, base: str, symbol: str, tf: str, sides: str = "both", htfs=()) -> dict:
+    """Génome construit sur une base ; sorties et gestion tirées comme pour un génome aléatoire."""
+    htf = next((t for t in HTF.get(tf, []) if t in htfs), None)
+    build = BASES[base][2]
+    tree = lambda s: {"id": "n0", "op": "and", "children": build(rng, s, htf)}
+    g = random_genome(rng, symbol, tf, sides, htfs)
+    g["entry"] = {"long": tree(1) if sides in ("both", "long") else None,
+                  "short": tree(-1) if sides in ("both", "short") else None}
+    return model.renumber(g)
+
+
 # ---------- mutations ----------
 
 def _entry_nodes(g):

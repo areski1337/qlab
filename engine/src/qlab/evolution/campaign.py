@@ -53,6 +53,8 @@ DEFAULT_CONFIG = {
     "initial_equity": 10_000.0,
     "stagnation_generations": 5,
     "exportable_only": True,  # pénalise (contrainte) les génomes non exportables en MQL5, sans les interdire
+    "bases": [],              # bases de stratégie (operators.BASES) mêlées aux génomes aléatoires ; vide = aléatoire seul
+    "seed_revision_ids": [],  # stratégies de départ (relance depuis une campagne précédente)
 }
 
 
@@ -193,17 +195,38 @@ class Campaign:
                 out[i] = proto.find(self.lab, k)["metrics"]
         return out
 
+    def new_genome(self, rng, tribe: str) -> dict:
+        """Génome neuf : une base de stratégie (60 %) si des bases sont choisies, sinon aléatoire."""
+        bases = self.cfg.get("bases") or []
+        g = (ops.base_genome(rng, rng.choice(bases), self.symbol, self.tf, self.cfg["sides"], self.htfs)
+             if bases and rng.random() < 0.6 else ops.random_genome(rng, self.symbol, self.tf, self.cfg["sides"], self.htfs))
+        return specialize(g, self.cfg["specialization_session"]) if tribe == "specialization" else g
+
+    def seeds(self) -> list[dict]:
+        """Stratégies de départ adaptées au marché de cette campagne ; celles qui deviennent invalides
+        (timeframe supérieur ou instrument de référence absent du contexte) sont écartées."""
+        out = []
+        for rid in self.cfg.get("seed_revision_ids") or []:
+            r = gstore.get(self.lab.con, rid)
+            g = copy.deepcopy(r["content"])
+            g["market"] = {"symbol": self.symbol, "timeframe": self.tf}
+            if not model.validate(g, set(self.htfs)):
+                out.append(self.revision(model.renumber(g), [(rid, "reseed", {"from_campaign": r["campaign_id"]})]))
+        return out
+
     # -- état initial --
     def init_state(self) -> dict:
         rng = random.Random(self.cfg["seed"])
+        seeds = self.seeds()
         pops = {}
         for t in self.cfg["tribes"]:
-            pops[t] = []
-            for _ in range(self.cfg["population"]):
-                g = ops.random_genome(rng, self.symbol, self.tf, self.cfg["sides"], self.htfs)
-                if t == "specialization":
-                    g = specialize(g, self.cfg["specialization_session"])
-                pops[t].append(self.revision(g)["id"])
+            # au plus la moitié de chaque tribu vient des stratégies de départ : le reste garde la diversité
+            pops[t] = [s["id"] for s in seeds[: self.cfg["population"] // 2]]
+            if t == "specialization":
+                pops[t] = [self.revision(specialize(copy.deepcopy(s["content"]), self.cfg["specialization_session"]),
+                                         [(s["id"], "specialize", {})])["id"] for s in seeds[: self.cfg["population"] // 2]]
+            while len(pops[t]) < self.cfg["population"]:
+                pops[t].append(self.revision(self.new_genome(rng, t))["id"])
         return {"phase": "tribes", "gen": 0, "pops": pops, "archives": {t: [] for t in self.cfg["tribes"]},
                 "rng": _rng_dump(rng), "op_stats": (prior := self.prior_op_stats()),
                 "op_prior": {k: list(v) for k, v in prior.items()},
@@ -266,10 +289,7 @@ class Campaign:
         children, origin = [], []
         n_imm = int(n * 0.2) if stag["level"] > 0 else 0
         for _ in range(n_imm):
-            g = ops.random_genome(rng, self.symbol, self.tf, self.cfg["sides"], self.htfs)
-            if tribe == "specialization":
-                g = specialize(g, self.cfg["specialization_session"])
-            children.append(self.revision(g))
+            children.append(self.revision(self.new_genome(rng, tribe)))
             origin.append(("immigrant", None))
         tries = 0
         while len(children) < n and tries < n * 6:
@@ -460,6 +480,12 @@ def create(lab, config: dict) -> tuple[str, str]:
     for t in cfg["tribes"]:
         objectives(t, {k: None for k in ("sharpe", "max_dd_pct", "r2_equity", "positive_months_ratio",
                                           "return_pct", "expectancy_r")})
+    unknown = [b for b in cfg["bases"] if b not in ops.BASES]
+    if unknown:
+        raise ValueError(f"bases de stratégie inconnues : {unknown}")
+    for rid in cfg["seed_revision_ids"]:
+        if not lab.con.execute("SELECT 1 FROM genome_revisions WHERE id=?", (rid,)).fetchone():
+            raise ValueError(f"stratégie de départ inconnue : {rid}")
     if cfg["cost_profile"].get("fixed_spread_points") is None:
         bars = load_bars(lab, cfg["dataset_version_id"])
         if (bars.spread <= 0).any():

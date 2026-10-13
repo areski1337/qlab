@@ -4,6 +4,10 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des compos
 
 ## [Non publié]
 ### Ajouté
+- Bases de stratégie : suivi de tendance, retour à la moyenne, cassure de range, cassure de session, ICT / Smart Money, repli dans la tendance (paramètres tirés au hasard, 60 % de la population de départ et des immigrants, le reste aléatoire). API `GET /strategy-bases`.
+- Relance d'une campagne depuis les stratégies retenues d'une campagne précédente (front final + statut ≥ filtrée, 40 au plus) : au plus la moitié de chaque tribu, réglages repris, filiation « reseed » conservée ; stratégies devenues invalides sur le nouveau marché écartées.
+- Création de campagne simplifiée : 4 étapes (marché, bases, repartir de, effort), préréglages Rapide / Standard / Approfondie, contexte supérieur choisi automatiquement, spread demandé seulement si les données en manquent, options avancées repliées ; bouton « Relancer » dans la liste et le laboratoire.
+- `build_installer.ps1 -NotesFile` : notes de version lues en UTF-8.
 - Refonte de l'interface (identité « Nocturne ») : barre haute avec écrans favoris, rail d'icônes groupé, palette de commandes (Ctrl+K : écrans, campagnes, révisions, thèmes), panneau d'activité (tâches + flux d'événements), barre d'état (moteur, worker, schéma, disque, heure UTC), raccourcis Alt+1…9 / Ctrl+J / Ctrl+B / Ctrl+,.
 - Personnalisation (préférences locales au poste) : 4 thèmes (Nocturne, Graphite, Ivoire, Ambre), couleur d'accent, palettes hausse/baisse (dont daltonienne), densité, type de graphique de prix, grille, réticule aimanté, favoris, écran de départ.
 - Graphiques : prix en bougies et capital + drawdown via `lightweight-charts` 5.2.1 (TradingView, Apache-2.0, logo d'attribution conservé) ; graphiques explicatifs SVG (walk-forward, WFO, Monte Carlo, hasard, sensibilité, stress de coûts, distribution des R, profit mensuel, heure × jour, corrélations, contribution au risque, entonnoir de validation, parité MT5), chacun accompagné d'une « lecture » en clair.

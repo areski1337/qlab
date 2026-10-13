@@ -187,3 +187,29 @@ def test_global_operator_memory_is_bounded_prior(lab):
     after = {r[0]: r[1] for r in lab.con.execute("SELECT key, tries FROM evolution_memory WHERE scope='global'")}
     own = {r[0]: r[1] for r in lab.con.execute("SELECT key, tries FROM evolution_memory WHERE scope=?", (f"campaign:{cid}",))}
     assert all(after[k] == glob.get(k, 0) + own.get(k, 0) for k in after)  # l'a priori n'est pas recompté
+
+
+def test_strategy_bases_always_valid():
+    rng = random.Random(4)
+    for base in ops.BASES:
+        for tf, htfs in (("M5", ("H1",)), ("M15", ()), ("H1", ("H4",))):
+            for sides in ("both", "long", "short"):
+                for _ in range(5):
+                    g = ops.base_genome(rng, base, "XAUUSD", tf, sides, htfs)
+                    assert model.validate(g, set(htfs)) == [], (base, tf, sides)
+
+
+def test_campaign_with_bases_and_seeds(lab):
+    dsv = import_synth(lab)
+    cid, tid, t = run_campaign(lab, small_cfg(dsv, bases=["trend", "breakout"]))
+    assert t["state"] == "completed", t["error"]
+    seeds = [f["revision_id"] for f in t["result"]["front"]][:3]
+    with pytest.raises(ValueError):
+        campaign.create(lab, small_cfg(dsv, bases=["inconnue"]))
+    cid2, tid2, t2 = run_campaign(lab, small_cfg(dsv, seed_revision_ids=seeds, seed=9))
+    assert t2["state"] == "completed", t2["error"]
+    # chaque stratégie de départ est reprise dans la nouvelle campagne, filiation « reseed » conservée
+    links = lab.con.execute("SELECT parent_id FROM genealogy WHERE operator='reseed'").fetchall()
+    assert {r[0] for r in links} == set(seeds)
+    assert all(r[0] == cid2 for r in lab.con.execute(
+        "SELECT g.campaign_id FROM genealogy l JOIN genome_revisions g ON g.id=l.child_id WHERE l.operator='reseed'"))

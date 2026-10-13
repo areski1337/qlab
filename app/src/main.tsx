@@ -13,7 +13,7 @@ import { PrefsProvider, THEMES, usePrefs } from "./prefs";
 import { Icon, Logo } from "./icons";
 import { Badge, fmt, useApi } from "./ui";
 
-export type Nav = { screen: string; rev?: string; campaign?: string };
+export type Nav = { screen: string; rev?: string; campaign?: string; seedFrom?: string };
 export const NavCtx = createContext<{ nav: Nav; go: (n: Nav) => void }>({ nav: { screen: "dash" }, go: () => {} });
 export const useNav = () => useContext(NavCtx);
 

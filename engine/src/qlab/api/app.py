@@ -247,6 +247,12 @@ def features():
                         for k, p in s.params.items()}} for s in REGISTRY.values()]
 
 
+@app.get(f"{API}/strategy-bases")
+def strategy_bases():
+    from ..evolution.operators import BASES
+    return [{"id": k, "label": v[0], "description": v[1]} for k, v in BASES.items()]
+
+
 @app.get(f"{API}/genomes")
 def genomes(campaign: str | None = None, status: str | None = None, limit: int = 200, lab=Depends(L)):
     q, a = "SELECT id, genome_id, revision, semantic_hash, status, campaign_id, created_at FROM genome_revisions WHERE 1=1", []

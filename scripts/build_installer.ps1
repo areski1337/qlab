@@ -4,7 +4,8 @@
 #   -Publish <dossier>     copie l'installateur puis latest.json (version, fichier, taille, SHA-512, notes)
 #                          dans la source de mises à jour lue par l'application
 #   -Notes "..."           notes de version affichées dans l'application
-param([string]$Version = "", [string]$Publish = "", [string]$Notes = "")
+#   -NotesFile notes.txt   idem depuis un fichier UTF-8 (accents préservés, contrairement aux arguments de Windows PowerShell)
+param([string]$Version = "", [string]$Publish = "", [string]$Notes = "", [string]$NotesFile = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $build = "$root\app\build"
@@ -45,6 +46,7 @@ Write-Host "4/4 Installateur NSIS (sortie : app\release-installer)"
 npx electron-builder --win nsis "-c.directories.output=release-installer"
 if ($LASTEXITCODE -ne 0) { throw "electron-builder a échoué" }
 Pop-Location
+if ($NotesFile) { $Notes = [IO.File]::ReadAllText((Resolve-Path $NotesFile), [Text.Encoding]::UTF8).Trim() }
 $ver = (Get-Content "$root\app\package.json" -Raw | ConvertFrom-Json).version
 $exe = Get-Item "$root\app\release-installer\QLab Setup $ver.exe"
 $manifest = [ordered]@{

@@ -12,26 +12,80 @@ const METRIC_FR: Record<string, string> = {
   expectancy_r: "Espérance (R)", win_rate: "Taux de réussite", n_trades: "Trades", r2_equity: "Régularité (R² equity)",
 };
 
+// Effort de recherche : préréglages (population / générations par tribu / générations de fusion)
+const PRESETS: Record<string, { label: string; hint: string; population: number; generations_per_tribe: number; merge_generations: number }> = {
+  quick: { label: "Rapide", hint: "aperçu en quelques minutes", population: 12, generations_per_tribe: 8, merge_generations: 4 },
+  standard: { label: "Standard", hint: "bon compromis", population: 24, generations_per_tribe: 20, merge_generations: 8 },
+  deep: { label: "Approfondie", hint: "plus de diversité, plus long", population: 48, generations_per_tribe: 40, merge_generations: 16 },
+};
+const HTF_PREF: Record<string, string[]> = { M1: ["M15", "H1"], M5: ["H1", "H4"], M15: ["H1", "H4"], M30: ["H4"], H1: ["H4"] };
+const DEFAULT_FORM = {
+  name: "", dataset_version_id: "", ctx: "", preset: "standard", bases: ["trend", "reversion", "breakout", "session", "ict", "pullback"],
+  tribes: ["consistency", "growth", "exploration", "specialization"], specialization_session: "london_kz",
+  population: 24, generations_per_tribe: 20, merge_generations: 8, seed: 42, workers: 4,
+  sides: "both", spread: "", commission: 0, slippage: 0, min_trades: 30, max_dd_pct: 30, max_ambiguous_ratio: 0.3,
+};
+
+/** Stratégies retenues d'une campagne : front final + révisions ayant franchi au moins le filtrage. */
+async function retainedOf(cid: string): Promise<string[]> {
+  const [c, g] = await Promise.all([api.get(`/campaigns/${cid}`), api.get(`/genomes?campaign=${cid}&limit=5000`)]);
+  const front = (c.task?.result?.front ?? []).map((f: any) => f.revision_id);
+  const kept = (g as any[]).filter((r) => !["unverified", "rejected", "quarantined"].includes(r.status)).map((r) => r.id);
+  return [...new Set([...front, ...kept])].slice(0, 40);
+}
+
 export function Campaigns() {
-  const { go } = useNav();
+  const { nav, go } = useNav();
   const ds = useApi<any[]>("/datasets", [], true);
   const camps = useApi<any[]>("/campaigns", [], true);
+  const bases = useApi<any[]>("/strategy-bases");
   const a = useAction();
   const [extra, setExtra] = useState<string[]>([]);
-  const [f, setF] = useState<any>({
-    name: "Campagne", dataset_version_id: "", ctx: "", tribes: ["consistency", "growth", "exploration", "specialization"],
-    specialization_session: "london_kz", population: 24, generations_per_tribe: 20, merge_generations: 8, seed: 42, workers: 4,
-    sides: "both", spread: "", commission: 0, slippage: 0, min_trades: 30, max_dd_pct: 30, max_ambiguous_ratio: 0.3,
-  });
+  const [f, setF] = useState<any>(DEFAULT_FORM);
+  const [seedFrom, setSeedFrom] = useState(nav.seedFrom ?? "");
+  const [seeds, setSeeds] = useState<string[] | null>(null);
+  useEffect(() => { if (nav.seedFrom) go({ ...nav, seedFrom: undefined }); }, []);  // relance consommée : pas de re-préremplissage plus tard
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === "number" ? Number(e.target.value) : e.target.value });
   const base = ds.data?.find((d) => d.id === f.dataset_version_id);
   const htfs = ds.data?.filter((d) => base && d.canonical_symbol === base.canonical_symbol && d.timeframe !== base.timeframe) ?? [];
+  const needSpread = (base?.qc?.zero_spread_ratio ?? 0) > 0;
   const evals = f.tribes.length * f.population * f.generations_per_tribe + f.population * f.merge_generations;
+
+  const pickDataset = (id: string) => {
+    const d = ds.data?.find((x) => x.id === id);
+    const ctx = d ? ds.data!.find((x) => x.canonical_symbol === d.canonical_symbol && (HTF_PREF[d.timeframe] ?? []).includes(x.timeframe)) : null;
+    setF((o: any) => ({ ...o, dataset_version_id: id, ctx: ctx?.id ?? "" }));
+  };
+  const preset = (k: string) => setF({ ...f, preset: k, population: PRESETS[k].population, generations_per_tribe: PRESETS[k].generations_per_tribe, merge_generations: PRESETS[k].merge_generations });
+
+  // relance : reprend les réglages de la campagne source et ses stratégies retenues
+  useEffect(() => {
+    setSeeds(null);
+    if (!seedFrom) return;
+    let live = true;
+    (async () => {
+      const [c, ids] = await Promise.all([api.get(`/campaigns/${seedFrom}`), retainedOf(seedFrom)]);
+      if (!live) return;
+      setSeeds(ids);
+      const k = c.config;
+      const ctx = Object.values(k.context_version_ids ?? {})[0] as string | undefined;
+      setF((o: any) => ({
+        ...o, name: `${c.name} · relance`, dataset_version_id: k.dataset_version_id, ctx: ctx ?? "", sides: k.sides,
+        tribes: k.tribes, specialization_session: k.specialization_session, bases: k.bases?.length ? k.bases : o.bases,
+        spread: k.cost_profile?.fixed_spread_points ?? "", commission: k.cost_profile?.commission_per_lot_side ?? 0,
+        slippage: k.cost_profile?.slippage_points ?? 0, seed: (k.seed ?? 42) + 1, ...k.constraints,
+      }));
+    })().catch(() => live && setSeeds([]));
+    return () => { live = false; };
+  }, [seedFrom]);
+
   const submit = () => a.run(async () => {
     const cfg: any = {
-      name: f.name, dataset_version_id: f.dataset_version_id, seed: f.seed, population: f.population,
+      name: f.name || `${base?.canonical_symbol} ${base?.timeframe} · ${PRESETS[f.preset]?.label ?? "personnalisée"}`,
+      dataset_version_id: f.dataset_version_id, seed: f.seed, population: f.population,
       generations_per_tribe: f.generations_per_tribe, merge_generations: f.merge_generations, tribes: f.tribes,
-      specialization_session: f.specialization_session, workers: f.workers, sides: f.sides,
+      specialization_session: f.specialization_session, workers: f.workers, sides: f.sides, bases: f.bases,
+      seed_revision_ids: seeds ?? [],
       context_version_ids: f.ctx ? { [ds.data!.find((d) => d.id === f.ctx).timeframe]: f.ctx } : {},
       constraints: { min_trades: f.min_trades, max_dd_pct: f.max_dd_pct, max_ambiguous_ratio: f.max_ambiguous_ratio },
       cost_profile: {
@@ -42,62 +96,92 @@ export function Campaigns() {
     };
     const r = await api.post("/campaigns", { config: cfg });
     // campagnes supplémentaires : mêmes réglages, un dataset par symbole (sans contexte HTF spécifique)
-    for (const d of extra) await api.post("/campaigns", { config: { ...cfg, name: `${f.name} · ${ds.data!.find((x) => x.id === d)?.canonical_symbol}`, dataset_version_id: d, context_version_ids: {} } });
+    for (const d of extra) await api.post("/campaigns", { config: { ...cfg, name: `${cfg.name} · ${ds.data!.find((x) => x.id === d)?.canonical_symbol}`, dataset_version_id: d, context_version_ids: {} } });
     go({ screen: "lab", campaign: r.campaign_id });
     return r;
   });
   return (
     <div>
-      <PageHead title="Campagnes" sub="Recherche génétique multi-tribus sur entraînement + validation. Les segments hors échantillon et final restent scellés." />
+      <PageHead title="Campagnes" sub="Recherche génétique sur entraînement + validation. Les segments hors échantillon et final restent scellés." />
       <div className="grid">
-        <Card title="Nouvelle campagne génétique" wide actions={<span className="muted" style={{ fontFamily: "var(--font-num)" }}>≈ {fmt(evals, 0)} évaluations prévues</span>}>
-          <h3>Marché</h3>
+        <Card title="Nouvelle campagne" wide actions={<span className="muted" style={{ fontFamily: "var(--font-num)" }}>≈ {fmt(evals, 0)} évaluations</span>}>
+          <h3>1 · Marché</h3>
           <div className="row">
-            <Field label="Nom"><input value={f.name} onChange={set("name")} /></Field>
-            <Field label="Dataset d'exécution">
-              <select value={f.dataset_version_id} onChange={set("dataset_version_id")}>
+            <Field label="Instrument et timeframe">
+              <select value={f.dataset_version_id} onChange={(e) => pickDataset(e.target.value)}>
                 <option value="">— choisir —</option>
-                {ds.data?.map((d) => <option key={d.id} value={d.id}>{d.canonical_symbol} {d.timeframe} v{d.version} ({fmt(d.n_bars, 0)} barres){d.synthetic ? " [SYNTHÉTIQUE]" : ""}</option>)}
+                {ds.data?.map((d) => <option key={d.id} value={d.id}>{d.canonical_symbol} {d.timeframe} · {fmt(d.n_bars, 0)} barres{d.synthetic ? " [SYNTHÉTIQUE]" : ""}</option>)}
               </select>
             </Field>
-            <Field label="Contexte HTF (optionnel)">
+            <Field label="Contexte supérieur" hint={f.ctx ? "choisi automatiquement" : undefined}>
               <select value={f.ctx} onChange={set("ctx")}>
                 <option value="">aucun</option>
                 {htfs.map((d) => <option key={d.id} value={d.id}>{d.timeframe} v{d.version}</option>)}
               </select>
             </Field>
-            <Field label="Lancer aussi sur (multi-symboles)">
-              <select multiple size={3} value={extra} onChange={(e) => setExtra(Array.from(e.target.selectedOptions).map((o) => o.value))}>
-                {ds.data?.filter((d) => base && d.timeframe === base.timeframe && d.id !== base.id).map((d) => <option key={d.id} value={d.id}>{d.canonical_symbol} {d.timeframe} v{d.version}</option>)}
+            <Field label="Sens"><Seg label="Sens" value={f.sides} onChange={(v) => setF({ ...f, sides: v })} options={[["both", "Long + short"], ["long", "Long"], ["short", "Short"]]} /></Field>
+            {needSpread && <Field label="Spread minimal (points)" hint="données sans spread sur certaines barres : requis"><input type="number" value={f.spread} onChange={set("spread")} placeholder="ex. 20" /></Field>}
+          </div>
+          <h3>2 · Bases de stratégie</h3>
+          <div className="row" style={{ gap: 6 }}>
+            {bases.data?.map((b) => {
+              const on = f.bases.includes(b.id);
+              return <button key={b.id} type="button" className={"btn" + (on ? " primary" : "")} title={b.description} aria-pressed={on}
+                onClick={() => setF({ ...f, bases: on ? f.bases.filter((x: string) => x !== b.id) : [...f.bases, b.id] })}>{b.label}</button>;
+            })}
+          </div>
+          <p className="muted" style={{ margin: "6px 0 0" }}>{f.bases.length ? `Population de départ : 60 % construits sur ${f.bases.length} base(s) choisie(s), 40 % aléatoires (exploration). Survoler une base pour sa logique.` : "Aucune base : population de départ entièrement aléatoire."}</p>
+          <h3>3 · Repartir de stratégies existantes (optionnel)</h3>
+          <div className="row">
+            <Field label="Campagne source">
+              <select value={seedFrom} onChange={(e) => setSeedFrom(e.target.value)}>
+                <option value="">— partir de zéro —</option>
+                {camps.data?.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.id}</option>)}
               </select>
             </Field>
-            <Field label="Côtés"><Seg label="Côtés" value={f.sides} onChange={(v) => setF({ ...f, sides: v })} options={[["both", "Long + short"], ["long", "Long"], ["short", "Short"]]} /></Field>
+            {seedFrom && <span className="muted" style={{ paddingBottom: 14 }}>{seeds == null ? "chargement…" : seeds.length
+              ? `${seeds.length} stratégie(s) retenue(s) reprises comme point de départ (au plus la moitié de chaque tribu) ; réglages de la campagne source repris.`
+              : "aucune stratégie retenue dans cette campagne : départ de zéro."}</span>}
           </div>
-          <h3>Tribus</h3>
-          <div className="row">
-            {TRIBES.map(([k, l]) => (
-              <label key={k}><input type="checkbox" checked={f.tribes.includes(k)}
-                onChange={(e) => setF({ ...f, tribes: e.target.checked ? [...f.tribes, k] : f.tribes.filter((x: string) => x !== k) })} /> {l}</label>))}
-            <Field label="Session de spécialisation"><select value={f.specialization_session} onChange={set("specialization_session")}>{SESSIONS.map((s) => <option key={s}>{s}</option>)}</select></Field>
+          <h3>4 · Effort</h3>
+          <div className="row" style={{ alignItems: "center" }}>
+            <Seg label="Effort" value={f.preset} onChange={preset} options={Object.entries(PRESETS).map(([k, p]) => [k, p.label]) as any} />
+            <span className="muted">{PRESETS[f.preset]?.hint ?? "réglages personnalisés"}</span>
           </div>
-          <h3>Effort de recherche</h3>
-          <div className="row">
-            <Field label="Population / tribu"><input type="number" min={4} max={500} value={f.population} onChange={set("population")} /></Field>
-            <Field label="Générations / tribu"><input type="number" min={1} max={500} value={f.generations_per_tribe} onChange={set("generations_per_tribe")} /></Field>
-            <Field label="Générations de fusion"><input type="number" min={0} max={200} value={f.merge_generations} onChange={set("merge_generations")} /></Field>
-            <Field label="Graine"><input type="number" value={f.seed} onChange={set("seed")} /></Field>
-            <Field label="Processus parallèles"><input type="number" min={0} max={64} value={f.workers} onChange={set("workers")} /></Field>
-          </div>
-          <h3>Coûts et contraintes</h3>
-          <div className="row">
-            <Field label="Spread fixe/plancher (points)" hint="requis si le spread historique est nul ; hypothèse"><input type="number" value={f.spread} onChange={set("spread")} placeholder="ex. 35" /></Field>
-            <Field label="Commission / lot / côté"><input type="number" step="0.01" value={f.commission} onChange={set("commission")} /></Field>
-            <Field label="Glissement (points)"><input type="number" value={f.slippage} onChange={set("slippage")} /></Field>
-            <Field label="Trades min (train)"><input type="number" value={f.min_trades} onChange={set("min_trades")} /></Field>
-            <Field label="DD max %"><input type="number" value={f.max_dd_pct} onChange={set("max_dd_pct")} /></Field>
-          </div>
-          <div className="actions">
-            <Btn kind="primary" busy={a.busy} disabled={!f.dataset_version_id || !f.tribes.length} onClick={submit}>Lancer la campagne{extra.length ? ` (+${extra.length})` : ""}</Btn>
+          <details style={{ marginTop: 10 }}>
+            <summary className="muted" style={{ cursor: "pointer" }}>Options avancées</summary>
+            <div className="row" style={{ marginTop: 8 }}>
+              <Field label="Nom"><input value={f.name} onChange={set("name")} placeholder="automatique" /></Field>
+              <Field label="Lancer aussi sur (multi-symboles)">
+                <select multiple size={3} value={extra} onChange={(e) => setExtra(Array.from(e.target.selectedOptions).map((o) => o.value))}>
+                  {ds.data?.filter((d) => base && d.timeframe === base.timeframe && d.id !== base.id).map((d) => <option key={d.id} value={d.id}>{d.canonical_symbol} {d.timeframe} v{d.version}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="row">
+              {TRIBES.map(([k, l]) => (
+                <label key={k}><input type="checkbox" checked={f.tribes.includes(k)}
+                  onChange={(e) => setF({ ...f, tribes: e.target.checked ? [...f.tribes, k] : f.tribes.filter((x: string) => x !== k) })} /> {l}</label>))}
+              <Field label="Session de spécialisation"><select value={f.specialization_session} onChange={set("specialization_session")}>{SESSIONS.map((s) => <option key={s}>{s}</option>)}</select></Field>
+            </div>
+            <div className="row">
+              <Field label="Population / tribu"><input type="number" min={4} max={500} value={f.population} onChange={(e) => setF({ ...f, preset: "", population: Number(e.target.value) })} /></Field>
+              <Field label="Générations / tribu"><input type="number" min={1} max={500} value={f.generations_per_tribe} onChange={(e) => setF({ ...f, preset: "", generations_per_tribe: Number(e.target.value) })} /></Field>
+              <Field label="Générations de fusion"><input type="number" min={0} max={200} value={f.merge_generations} onChange={(e) => setF({ ...f, preset: "", merge_generations: Number(e.target.value) })} /></Field>
+              <Field label="Graine"><input type="number" value={f.seed} onChange={set("seed")} /></Field>
+              <Field label="Processus parallèles"><input type="number" min={0} max={64} value={f.workers} onChange={set("workers")} /></Field>
+            </div>
+            <div className="row">
+              {!needSpread && <Field label="Spread plancher (points)" hint="optionnel : max(spread historique, plancher)"><input type="number" value={f.spread} onChange={set("spread")} /></Field>}
+              <Field label="Commission / lot / côté"><input type="number" step="0.01" value={f.commission} onChange={set("commission")} /></Field>
+              <Field label="Glissement (points)"><input type="number" value={f.slippage} onChange={set("slippage")} /></Field>
+              <Field label="Trades min (train)"><input type="number" value={f.min_trades} onChange={set("min_trades")} /></Field>
+              <Field label="DD max %"><input type="number" value={f.max_dd_pct} onChange={set("max_dd_pct")} /></Field>
+            </div>
+          </details>
+          <div className="actions" style={{ marginTop: 12 }}>
+            <Btn kind="primary" busy={a.busy} disabled={!f.dataset_version_id || !f.tribes.length || (needSpread && f.spread === "") || (!!seedFrom && seeds == null)} onClick={submit}>
+              Lancer la campagne{extra.length ? ` (+${extra.length})` : ""}</Btn>
             <span className="muted">Aucune campagne ne peut envoyer d'ordre.</span>
           </div>
           {a.view}
@@ -107,7 +191,8 @@ export function Campaigns() {
           <Table rows={camps.data} onRow={(r) => go({ screen: "lab", campaign: r.id })} cols={[
             { k: "name", t: "Nom", f: (r) => <b>{r.name}</b> }, { k: "id", t: "ID" }, { k: "task_state", t: "État", f: (r) => <Badge s={r.task_state} /> },
             { k: "progress", t: "Progression", f: (r) => <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 140 }}><div className="progress" style={{ flex: 1 }}><i style={{ width: `${r.progress * 100}%` }} /></div>{fmt(r.progress * 100, 0)} %</div> },
-            { k: "n_candidates", t: "Candidats", num: true }, { k: "created_at", t: "Créée (UTC)" }]} />
+            { k: "n_candidates", t: "Candidats", num: true }, { k: "created_at", t: "Créée (UTC)" },
+            { k: "act", t: "", f: (r) => <button className="btn" onClick={(e) => { e.stopPropagation(); setSeedFrom(r.id); window.scrollTo(0, 0); document.querySelector("main")?.scrollTo(0, 0); }}>Relancer</button> }]} />
         </Card>
       </div>
     </div>
@@ -127,7 +212,7 @@ function CampaignPicker() {
 }
 
 export function CampaignLab() {
-  const { nav } = useNav();
+  const { nav, go } = useNav();
   const c = useApi(nav.campaign ? `/campaigns/${nav.campaign}` : null, [nav.campaign], true);
   const a = useAction();
   const [norm, setNorm] = useState<"abs" | "norm">("abs");
@@ -159,6 +244,7 @@ export function CampaignLab() {
         </div>
         <div className="grid">
           <Card title={d.name} wide actions={<>
+            <Btn disabled={d.task.state !== "completed"} title="Nouvelle campagne partant des stratégies retenues de celle-ci" onClick={() => go({ screen: "campaigns", seedFrom: d.id })}>Relancer depuis cette campagne</Btn>
             <Btn busy={a.busy} disabled={!["queued", "running"].includes(d.task.state)} onClick={() => act("pause")}>Pause</Btn>
             <Btn busy={a.busy} disabled={d.task.state !== "paused"} onClick={() => act("resume")}>Reprendre</Btn>
             <Btn kind="danger" busy={a.busy} disabled={["completed", "cancelled", "failed"].includes(d.task.state) || d.task.state === "running"} onClick={() => act("cancel")}>Annuler</Btn>
