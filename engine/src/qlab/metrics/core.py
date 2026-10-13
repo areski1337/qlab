@@ -30,7 +30,7 @@ def compute(result: dict, ts_window: tuple[int, int] | None = None) -> dict:
         m.update({k: None for k in ("net_profit", "return_pct", "expectancy", "expectancy_r", "win_rate",
                                     "profit_factor", "sharpe", "sortino", "max_dd_pct", "max_dd_abs",
                                     "longest_underwater_days", "r2_equity", "avg_bars_held",
-                                    "positive_months_ratio", "trades_per_month", "ambiguous_ratio")})
+                                    "positive_months_ratio", "trades_per_month", "ambiguous_ratio", "long_share")})
         m["by_year"] = {}
         m["costs"] = {"commission": 0.0, "swap": 0.0, "spread_est": 0.0}
         return m
@@ -89,6 +89,7 @@ def compute(result: dict, ts_window: tuple[int, int] | None = None) -> dict:
         "positive_months_ratio": float((by_month > 0).mean()),
         "trades_per_month": float(n / span_months),
         "ambiguous_ratio": float(np.mean([t["ambiguous"] for t in trades])),
+        "long_share": float(np.mean([t["dir"] == 1 for t in trades])),
         "by_year": {int(k): {"net": float(v["sum"]), "n": int(v["count"])} for k, v in by_year.iterrows()},
         "costs": {"commission": float(sum(t["commission"] for t in trades)),
                   "swap": float(sum(t["swap"] for t in trades)),
