@@ -20,7 +20,7 @@ const CFG = () => path.join(app.getPath("userData"), "update.json");
 const DIR = () => path.join(app.getPath("userData"), "updates");
 const FILE_RE = /^[A-Za-z0-9 ._-]+\.exe$/;
 const GH_RE = /^github:([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)$/;
-export const DEFAULT_SOURCE = "github:__OWNER__/qlab";  // releases publiées par scripts/build_installer.ps1 -Release
+export const DEFAULT_SOURCE = "github:areski1337/qlab";  // releases publiées par scripts/build_installer.ps1 -Release
 
 const state: UpdateState = { current: "", source: null, checked_at: null, available: null,
   downloaded: null, progress: null, error: null };
