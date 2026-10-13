@@ -13,7 +13,9 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des compos
 - Validation : segments chronologiques, holdout final gouverné, robustesse (WF figé, sensibilité, stress de coûts, Monte Carlo, baselines aléatoires, DSR), statuts à preuves.
 - MQL5 : générateur déterministe (bibliothèque miroir), compilation MetaEditor réelle, Strategy Tester, parité A–F.
 - Passeport et export ; portefeuille borné ; démo en lecture seule (dégradation, suspension, arrêt d'urgence, paliers de risque).
-- API locale v1 et interface Electron/React (13 écrans, français).
+- API locale v1 et interface Electron/React (13 écrans, français), empaquetage `electron-builder` (répertoire).
+- Expériences contrôlées sur les méthodes de recherche (section 18) avec canal expérimental et retour arrière.
+- Diagnostics de parité (écarts classés : gap, ambiguïté intrabar, non expliqué).
 
 ### Corrigé pendant le développement (constatés par les tests ou les runs réels)
 - Conversion d'époque incorrecte avec pandas 3 (résolution en secondes).
@@ -24,6 +26,8 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des compos
 - Renderer vide sous `file://` : passage au protocole `app://`.
 - Multiplicité (DSR) sous-estimée quand des évaluations sont réutilisées depuis le cache partagé.
 - Paramètre de configuration `memory_limit_mb` non appliqué : supprimé.
+- Versions de composants inexistants (`backtester_fast`, `presentation_score`) retirées.
+- Parité : la référence appliquait le glissement de recherche alors que le testeur n'en a pas (ADR-013).
 
 ### Générateur MQL5
 - 1.0 : version initiale (parité A sur XAUUSD M5).

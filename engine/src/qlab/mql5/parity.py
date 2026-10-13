@@ -120,7 +120,7 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
             "exit_diff_pts": (e["out"]["price"] - r["exit"]) / pt,
             "exit_bar_diff": int(((e["out"]["time_utc"] // tf) * tf - r["exit_ts"]) // tf),
             "lots_ref": r["lots"], "lots_mt5": e["in"]["volume"],
-            "reason_ref": r_reason, "reason_mt5": e_reason, "ambiguous_ref": r["ambiguous"],
+            "reason_ref": r_reason, "reason_mt5": e_reason, "ambiguous_ref": r["ambiguous"], "reason_ref_detail": r["reason"],
             "pnl_ref": r["pnl"], "pnl_mt5": e["out"]["profit"] + e["in"]["commission"] + e["out"]["commission"]
                                            + e["out"]["swap"],
         })
@@ -132,6 +132,17 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
                   for t in tr["trades"])
     net_diff = abs(net_ref - net_mt5) / max(abs(net_mt5), abs(net_ref), deposit * 0.01)
 
+    # Diagnostics : écarts de prix de sortie au-delà de la tolérance, classés par cause identifiable.
+    tol = max(5.0, float(np.median(b.spread[b.spread > 0])) if (b.spread > 0).any() else 5.0)
+    diagnostics = []
+    for r in rows:
+        if abs(r["exit_diff_pts"]) <= tol:
+            continue
+        cause = {"stop_gap": "gap à travers le stop : référence remplie à l'ouverture (conservateur), testeur au prix du stop",
+                 "target_gap": "gap à travers l'objectif : remplissages différents à l'ouverture"}.get(
+            r["reason_ref_detail"], "ambiguïté intrabar (stop/objectif même barre)" if r["ambiguous_ref"] else "non expliquée")
+        diagnostics.append({"entry_ts": r["entry_ts"], "exit_diff_pts": r["exit_diff_pts"],
+                            "pnl_diff": r["pnl_mt5"] - r["pnl_ref"], "cause": cause})
     grade = "F"
     for g, tm, nd, ra in GRADES:
         if trade_match >= tm and net_diff <= nd and reason_agree >= ra:
@@ -144,6 +155,9 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
         critical_reasons.append(f"trades appariés {trade_match:.1%} < 90 %")
     if lots_bad > 0.05:
         critical_reasons.append(f"tailles divergentes sur {lots_bad:.1%} des trades")
+    unexplained = sum(1 for d in diagnostics if d["cause"] == "non expliquée")
+    if rows and unexplained / len(rows) > 0.05:
+        critical_reasons.append(f"{unexplained} écart(s) de sortie non expliqué(s)")
     if tr["order_failures"]:
         critical_reasons.append(f"{tr['order_failures']} ordre(s) refusé(s) par le testeur")
     abs_med = lambda k: float(np.median(np.abs([r[k] for r in rows]))) if rows else None
@@ -165,6 +179,8 @@ def compare(tr: dict, rev: dict, cache, risk, deposit: float, costs_base: dict) 
         "costs_observed": {"commission_per_lot_side": comm_side, "commission_total": comm,
                            "swap_total": sum(t["out"]["swap"] for t in tr["trades"])},
         "ea_skips": tr["skips"], "nohist_bars": tr["nohist"],
+        "diagnostics": diagnostics, "exit_tolerance_pts": tol,
+        "unexplained_divergences": sum(1 for d in diagnostics if d["cause"] == "non expliquée"),
         "matched_sample": rows[:50],
         "tolerances": {"grades": GRADES, "critical": "signaux < 95 %, trades < 90 %, lots > 5 %, ordres refusés"},
         "grade": grade, "critical": bool(critical_reasons), "critical_reasons": critical_reasons,

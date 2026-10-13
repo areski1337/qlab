@@ -42,5 +42,16 @@ Front final : Sharpe train 0,35–0,55, validation 0,16–0,86, rendements de l'
 
 Interprétation : avec N = 1 375 essais et une dispersion des Sharpe annualisés σ ≈ 1,1 (σ ≈ 1,0 en ne gardant que les 1 039 essais faisables, calcul informatif non utilisé pour la décision), le Sharpe maximal attendu par hasard est d'environ 3,3–3,7 annualisé ; les Sharpe observés (0,35–0,55) sont compatibles avec le hasard. **Aucune stratégie n'est validée** à l'issue de cette campagne. Le critère n'a pas été modifié après observation.
 
+### Parité MT5 sur des génomes découverts par le GA (XAUUSD M5, 2026-04-01→10-01, OHLC M1)
+Référence rejouée dans les conditions du testeur (spread des barres, commission observée, glissement nul — ADR-013).
+
+| Révision | Features | Signaux | Trades appariés | Écart médian entrée/sortie | PnL net MT5 / réf. | Note |
+|---|---|---|---|---|---|---|
+| …77c5fab6 | Order Block H1, swings H1, ADX, Bollinger, time stop | 287/287 | 24/24 | 0,0 / 0,38 pt | 24,29 / 13,55 | C — 1 gap à travers le stop (référence à l'ouverture, testeur au prix du stop), diagnostiqué, 0 écart inexpliqué |
+| …4c13208d | + sweep de liquidité, break-even, trailing | 287/287 | 24/24 | 0,0 / 0,0 pt | 107,93 / 108,57 | **A** |
+| …e022e369 | MSS H1, EMA, break-even | 299/299 | 24/24 | 0,0 / 0,0 pt | 91,41 / 92,20 | **A** |
+
+Statuts inchangés : ces révisions étaient déjà `rejected` (une parité ne valide pas une stratégie rejetée).
+
 ## Interface
 13 écrans capturés en mode QA (fenêtre cachée) sans erreur console ; moteur démarré par l'interface, jeton et port aléatoires.

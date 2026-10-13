@@ -117,3 +117,9 @@ def backup(lab, task):
 def demo_observe(lab, task):
     from ..demo import monitor
     return monitor.observe(lab, task["payload"]["deployment_id"])
+
+
+@handler("engine_experiment")
+def engine_experiment(lab, task):
+    from ..evolution.meta import run_task
+    return run_task(lab, task)

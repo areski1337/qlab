@@ -18,7 +18,9 @@ Détails : [docs/operations/installation.md](docs/operations/installation.md).
 - Moteur de backtest de référence avec spread/commission/swap/glissement, contrôleur de risque indépendant (limites absolues hors génome).
 - Campagnes génétiques NSGA-II à contraintes, 4 tribus + fusion, diversité, stagnation, mémoire des opérateurs, checkpoints et reprise sans doublon, workers parallèles.
 - Robustesse : walk-forward à paramètres figés, sensibilité, stress de coûts, Monte Carlo, baselines aléatoires, Deflated Sharpe Ratio ; statuts de validation à preuves.
-- Générateur MQL5 déterministe → compilation MetaEditor réelle (0 erreur, 0 avertissement) → Strategy Tester réel → parité : premier run XAUUSD M5 (août–sept. 2026) **note A**, 12/12 trades, 18/18 signaux, écart PnL 0,9 %.
+- Générateur MQL5 déterministe → compilation MetaEditor réelle (0 erreur, 0 avertissement) → Strategy Tester réel → parité : 4 génomes (dont 3 découverts par le GA) — 100 % de signaux et de trades concordants, notes A, A, A, C (C : un gap à travers le stop, diagnostiqué).
+- Campagne réelle XAUUSD M5 : 2 098 candidats en 6 min ; tous les candidats du front **rejetés** par le Deflated Sharpe Ratio (résultats compatibles avec le hasard compte tenu du nombre d'essais) — le système refuse de valider ce qu'il ne peut pas prouver.
+- Expériences contrôlées sur les méthodes de recherche (section 18), promotion manuelle vers un canal expérimental.
 - Passeport de stratégie (observations / hypothèses / interprétations / non vérifié), export ZIP avec manifeste d'empreintes.
 - Portefeuille (allocation bornée, corrélations, risque marginal, exposition), démo en lecture seule (dégradation, suspension, arrêt d'urgence, paliers de risque 25/50/100 %).
 - Interface Electron/React en français, 13 écrans connectés à l'API locale.

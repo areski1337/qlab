@@ -18,6 +18,6 @@ Statuts : **vérifié** = test automatisé exécuté et réussi ; **vérifié (r
 | AT-012 | Une campagne ne peut pas activer le trading réel | vérifié | `test_api.py::test_risk_limits_cannot_enable_live` ; `risk/controller.py::load_limits` refuse `live_trading_enabled` ; EA : refus codé en dur sur compte réel ; démo : `fetch_live_trades` refuse un compte réel |
 | AT-013 | Rapports : observations / hypothèses / inconnues distinguées | vérifié | `test_passport.py::test_passport_sections_and_export` |
 | AT-014 | Tout EA exporté référence génome, versions et tests | vérifié | `test_mql5.py::test_generation_deterministic_and_traceable`, `test_passport.py` (manifeste d'export) |
-| AT-015 | Fonctionnalités incomplètes explicitement signalées | vérifié (manuel) | écrans UI : composant `Incomplete`, blocages d'export, statut « bloqué » du testeur ; inventaire `docs/inventory.md` |
+| AT-015 | Fonctionnalités incomplètes explicitement signalées | vérifié (manuel) | UI : « filtre d'annonces inactif », « clôture avant week-end non implémentée », export MQL5 bloqué avec motif, statut « bloqué » du testeur, avertissements de biais ; API : `blocked` + diagnostic ; inventaire `docs/inventory.md` |
 
 Résultats d'exécution : voir `docs/testing/results.md`.

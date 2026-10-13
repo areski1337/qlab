@@ -187,7 +187,10 @@ def render_html(p: dict) -> str:
                    f"{' — ' + e(c['diagnostic']) if c['diagnostic'] else ''}</li>" for c in p["observations"]["compilations"]) or "<li>aucune</li>"
     st = "".join(f"<li>{e(t['ts'])} : {e(t['from_status'])} → <strong>{e(t['to_status'])}</strong></li>" for t in p["status_history"])
     rob = p["observations"]["robustness"]
-    robh = ("<ul>" + "".join(f"<li>{e(k)} : {e(str(c['value']))} → {'OK' if c['pass'] else ('non calculable' if c['pass'] is None else 'ÉCHEC')}</li>"
+    def num(v):
+        return f"{v:.4g}" if isinstance(v, float) else str(v)
+    verdict = lambda ok: "OK" if ok else ("non calculable" if ok is None else "ÉCHEC")
+    robh = ("<ul>" + "".join(f"<li>{e(k)} : {e(num(c['value']))} → {verdict(c['pass'])}</li>"
                              for k, c in rob["checks"].items()) + "</ul>") if rob else "<p>Non exécutés.</p>"
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Passeport {e(p['identity']['revision_id'])}</title>

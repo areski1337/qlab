@@ -1,0 +1,132 @@
+{
+  "entry": {
+    "long": {
+      "id": "n1",
+      "op": "event",
+      "ref": {
+        "feature": "order_block",
+        "output": "bear_retest",
+        "params": {
+          "expiry": 457,
+          "left": 11,
+          "lookback": 5,
+          "right": 14
+        },
+        "tf": "H1"
+      }
+    },
+    "short": {
+      "children": [
+        {
+          "cmp": "lt",
+          "id": "n3",
+          "left": {
+            "feature": "price",
+            "output": "close",
+            "params": {}
+          },
+          "op": "compare",
+          "right": {
+            "feature": "swings",
+            "output": "last_high",
+            "params": {
+              "left": 1,
+              "right": 10
+            },
+            "tf": "H1"
+          }
+        },
+        {
+          "id": "n4",
+          "op": "event",
+          "ref": {
+            "feature": "structure",
+            "output": "mss_down",
+            "params": {
+              "break_on": "close",
+              "disp_atr": 2.1,
+              "left": 3,
+              "right": 13
+            },
+            "tf": "H1"
+          }
+        },
+        {
+          "cmp": "cross_above",
+          "id": "n5",
+          "left": {
+            "feature": "adx",
+            "output": "adx",
+            "params": {
+              "period": 50
+            }
+          },
+          "op": "compare",
+          "right": {
+            "const": 25.89
+          }
+        },
+        {
+          "cmp": "cross_above",
+          "id": "n6",
+          "left": {
+            "feature": "price",
+            "output": "close",
+            "params": {}
+          },
+          "op": "compare",
+          "right": {
+            "feature": "ema",
+            "output": "value",
+            "params": {
+              "period": 73
+            }
+          }
+        },
+        {
+          "cmp": "cross_above",
+          "id": "n7",
+          "left": {
+            "feature": "adx",
+            "output": "adx",
+            "params": {
+              "period": 50
+            }
+          },
+          "op": "compare",
+          "right": {
+            "const": 25.89
+          }
+        }
+      ],
+      "id": "n2",
+      "op": "and"
+    }
+  },
+  "exit": {
+    "break_even": {
+      "at_r": 1.26
+    },
+    "exit_on_opposite": false,
+    "stop": {
+      "mult": 2.87,
+      "period": 14,
+      "type": "atr"
+    },
+    "target": null,
+    "time_stop_bars": 12,
+    "trailing": null
+  },
+  "management": {
+    "cooldown_bars": 3,
+    "max_trades_per_day": 1
+  },
+  "market": {
+    "symbol": "XAUUSD",
+    "timeframe": "M5"
+  },
+  "schema": "qlab.genome/1.0",
+  "sizing": {
+    "risk_pct": 0.5
+  }
+}

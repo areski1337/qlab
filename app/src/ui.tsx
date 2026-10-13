@@ -164,7 +164,3 @@ export function Json({ v }: { v: any }) {
 export function Field(p: { label: string; children: React.ReactNode; hint?: string }) {
   return <label className="field"><span>{p.label}</span>{p.children}{p.hint && <small className="muted">{p.hint}</small>}</label>;
 }
-
-export function Incomplete({ what, why }: { what: string; why: string }) {
-  return <div className="alert warn"><strong>Fonction incomplète — {what}.</strong> {why}</div>;
-}

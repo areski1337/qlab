@@ -16,7 +16,6 @@ COMPONENT_VERSIONS: dict[str, str] = {
     "data_qc": "1.0",
     "feature_engine": "1.0",
     "regime_engine": "1.0",
-    "backtester_fast": "1.0",
     "backtester_reference": "1.0",
     "cost_model": "1.0",
     "metrics": "1.0",
@@ -27,7 +26,6 @@ COMPONENT_VERSIONS: dict[str, str] = {
     "parity": "1.0",
     "risk_controller": "1.0",
     "portfolio": "1.0",
-    "presentation_score": "1.0",
 }
 
 

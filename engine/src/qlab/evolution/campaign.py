@@ -446,6 +446,9 @@ def _rng_load(d):
 def create(lab, config: dict) -> tuple[str, str]:
     """Enregistre la campagne et sa tâche. Retourne (campaign_id, task_id)."""
     cfg = {**DEFAULT_CONFIG, **config}
+    if cfg.get("channel") == "experimental":  # méthodes promues par expérience (liste blanche), jamais par défaut
+        from .meta import experimental_overrides
+        cfg = {**cfg, **experimental_overrides(lab)}
     if not cfg["dataset_version_id"]:
         raise ValueError("dataset_version_id requis")
     if not cfg["tribes"]:

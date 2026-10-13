@@ -42,6 +42,43 @@ export function Tasks() {
   );
 }
 
+function EngineExperiments() {
+  const ex = useApi("/engine-experiments", [], true);
+  const ds = useApi<any[]>("/datasets");
+  const a = useAction();
+  const [f, setF] = useState({ hypothesis: "", dsv: "", key: "crossover_rate", base: "0.3", variant: "0.5", metric: "best_validation_sharpe", spread: "" });
+  const d = ex.data as any;
+  const parse = (v: string) => (isNaN(Number(v)) ? v : Number(v));
+  return (
+    <Card title="Expériences sur les méthodes de recherche (évolution du moteur)" wide>
+      <p className="muted">Compare une méthode de base et une variante sur ≥ 3 graines, hypothèse et critères fixés avant exécution (gain sur ≥ 70 % des graines et test des signes p ≤ 0,1). Seuls des paramètres de méthode peuvent varier : contraintes, coûts, protocole et limites de risque sont exclus. Une variante gagnante n'est jamais appliquée automatiquement ; elle peut être promue dans le canal « expérimental » (retour arrière possible).</p>
+      <div className="row">
+        <Field label="Hypothèse"><input style={{ width: 360 }} value={f.hypothesis} onChange={(e) => setF({ ...f, hypothesis: e.target.value })} /></Field>
+        <Field label="Dataset"><select value={f.dsv} onChange={(e) => setF({ ...f, dsv: e.target.value })}><option value="">—</option>{ds.data?.map((x) => <option key={x.id} value={x.id}>{x.canonical_symbol} {x.timeframe} v{x.version}</option>)}</select></Field>
+        <Field label="Paramètre"><select value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })}>{d?.method_keys?.map((k: string) => <option key={k}>{k}</option>)}</select></Field>
+        <Field label="Base"><input value={f.base} onChange={(e) => setF({ ...f, base: e.target.value })} /></Field>
+        <Field label="Variante"><input value={f.variant} onChange={(e) => setF({ ...f, variant: e.target.value })} /></Field>
+        <Field label="Métrique"><select value={f.metric} onChange={(e) => setF({ ...f, metric: e.target.value })}>{d?.metrics?.map((k: string) => <option key={k}>{k}</option>)}</select></Field>
+        <Field label="Spread plancher (pts)"><input value={f.spread} onChange={(e) => setF({ ...f, spread: e.target.value })} /></Field>
+      </div>
+      <Btn kind="primary" busy={a.busy} disabled={!f.dsv || f.hypothesis.length < 10} onClick={() => a.run(() => api.post("/engine-experiments", {
+        hypothesis: f.hypothesis, spec: {
+          base: { dataset_version_id: f.dsv, population: 12, generations_per_tribe: 4, merge_generations: 2, tribes: ["growth", "consistency"], workers: 4,
+            cost_profile: { name: "exp", version: 1, spread_mode: "max", fixed_spread_points: f.spread === "" ? null : Number(f.spread), commission_per_lot_side: 0, slippage_points: 0, apply_swap: true, provenance: {} } },
+          baseline: { [f.key]: parse(f.base) }, variant: { [f.key]: parse(f.variant) }, seeds: [1, 2, 3, 4, 5], metric: f.metric, direction: "higher" },
+      }), (r) => `Expérience soumise (tâche ${r.task_id}).`)}>Lancer l'expérience</Btn>
+      <Btn busy={a.busy} onClick={() => a.run(() => api.post("/engine-rollback"), () => "Retour arrière du canal expérimental effectué.")}>Retour arrière</Btn>
+      {a.view}
+      <p>Canal expérimental actuel : <code>{JSON.stringify(d?.experimental_overrides ?? {})}</code></p>
+      <Table rows={d?.experiments ?? null} empty="Aucune expérience." cols={[
+        { k: "created_at", t: "Date (UTC)" }, { k: "hypothesis", t: "Hypothèse" }, { k: "verdict", t: "Verdict", f: (r) => r.verdict ?? "en cours" },
+        { k: "results.win_ratio", t: "Gains", f: (r) => r.results ? `${r.results.wins}/${r.results.rows.length}` : "—" },
+        { k: "results.sign_test_p", t: "p", num: true },
+        { k: "id", t: "", f: (r) => r.verdict === "promote_candidate" ? <button className="btn" onClick={() => a.run(() => api.post(`/engine-experiments/${r.id}/promote`), () => "Promue dans le canal expérimental.")}>Promouvoir (expérimental)</button> : null }]} />
+    </Card>
+  );
+}
+
 export function Settings() {
   const s = useApi("/settings", [], true);
   const h = useApi("/health", [], true);
@@ -83,6 +120,7 @@ export function Settings() {
           </dl>}
           <h3>Configuration</h3><Json v={(s.data as any)?.settings} />
         </Card>
+        <EngineExperiments />
         <Card title="Sauvegardes" wide actions={<Btn busy={bk.busy} kind="primary" onClick={() => bk.run(() => api.post("/backups"), (r) => `Sauvegarde soumise (tâche ${r.task_id}).`)}>Sauvegarder maintenant</Btn>}>
           {bk.view}
           <p className="muted">Archive cohérente : base SQLite (API backup), artefacts et datasets, manifeste d'empreintes. « Vérifier » restaure dans un répertoire temporaire et contrôle empreintes et références sans toucher aux données. Restauration complète : voir docs/operations/backup-restore.md.</p>

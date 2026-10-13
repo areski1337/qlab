@@ -73,7 +73,9 @@ JSON Schema + sémantique, typage des comparaisons, révisions immuables, filiat
 
 ## Auto-amélioration du moteur (section 18)
 | Versionnement des composants, non-réécriture des résultats | complet |
-| Expérimentation contrôlée sur les méthodes de recherche (hypothèse, ablation, promotion, rollback) | absent |
+| Expérimentation contrôlée sur les méthodes (hypothèse et critères préalables, graines multiples, test des signes, liste blanche de paramètres de méthode) | complet |
+| Promotion vers le canal expérimental + retour arrière, jamais automatique | complet |
+| Ablations automatiques multi-périodes, recherche autonome de nouvelles méthodes | absent |
 
 ## Performance et plateforme (sections 19–23)
 | File persistante, priorités, pause/reprise/annulation, cache exact, parallélisme borné | complet |

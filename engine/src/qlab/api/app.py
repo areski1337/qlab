@@ -503,6 +503,50 @@ def demo_action(did: str, action: str, body: Flag | None = None, lab=Depends(L))
     raise HTTPException(400, "action inconnue")
 
 
+# ---------------------------------------------------------------- expériences sur le moteur (section 18)
+class ExperimentIn(BaseModel):
+    hypothesis: str = Field(min_length=10)
+    spec: dict
+
+
+@app.post(f"{API}/engine-experiments")
+def create_experiment(body: ExperimentIn, lab=Depends(L)):
+    from ..evolution import meta
+    try:
+        eid, tid = meta.create(lab, body.hypothesis, body.spec)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(422, str(e))
+    return {"experiment_id": eid, "task_id": tid}
+
+
+@app.get(f"{API}/engine-experiments")
+def experiments(lab=Depends(L)):
+    from ..evolution import meta
+    out = rows(lab.con.execute("SELECT id, hypothesis, spec_json, task_id, results_json, verdict, created_at "
+                               "FROM engine_experiments ORDER BY created_at DESC"))
+    for e in out:
+        e["spec"] = json.loads(e.pop("spec_json"))
+        e["results"] = json.loads(e.pop("results_json")) if e["results_json"] else None
+    return {"experiments": out, "experimental_overrides": meta.experimental_overrides(lab),
+            "method_keys": sorted(meta.METHOD_KEYS), "metrics": sorted(meta.METRICS),
+            "history": rows(lab.con.execute("SELECT * FROM engine_promotions ORDER BY id DESC LIMIT 50"))}
+
+
+@app.post(f"{API}/engine-experiments/{{eid}}/promote")
+def promote_experiment(eid: str, lab=Depends(L)):
+    from ..evolution import meta
+    try:
+        return {"experimental_overrides": meta.promote(lab, eid)}
+    except PermissionError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post(f"{API}/engine-rollback")
+def engine_rollback(lab=Depends(L)):
+    from ..evolution import meta
+    return {"experimental_overrides": meta.rollback(lab)}
+
+
 # ---------------------------------------------------------------- sauvegardes
 @app.post(f"{API}/backups")
 def backup_now(lab=Depends(L)):
