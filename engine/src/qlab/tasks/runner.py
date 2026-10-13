@@ -50,3 +50,6 @@ def resume(lab, tid: str) -> None:
 def _campaign(lab, task):
     from ..evolution.campaign import run_task
     return run_task(lab, task)
+
+
+from . import handlers as _handlers  # noqa: E402,F401 — enregistre les handlers

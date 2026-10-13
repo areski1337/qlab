@@ -31,5 +31,12 @@ class Lab:
         lab = cls(paths, con, ArtifactStore(paths.artifacts, con), log, settings, db.record_versions(con))
         return lab
 
+    @classmethod
+    def attach(cls, root: Path | str) -> "Lab":
+        """Nouvelle connexion sur une base déjà migrée (une par thread : sqlite3 n'est pas partageable)."""
+        paths = Paths(Path(root))
+        con = db.connect(paths.db)
+        return cls(paths, con, ArtifactStore(paths.artifacts, con), JsonLogger(paths.logs), load_settings(paths), "")
+
     def close(self) -> None:
         self.con.close()

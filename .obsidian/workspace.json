@@ -183,6 +183,10 @@
   },
   "active": "8a4cb13f2c3b13f6",
   "lastOpenFiles": [
+    "engine/tests/test_api.py",
+    "engine/src/qlab/api/sedVvLpcp",
+    "engine/src/qlab/api/app.py",
+    "engine/src/qlab/tasks/handlers.py",
     "engine/tests/test_passport.py",
     "engine/src/qlab/passport/build.py",
     "engine/tests/test_mql5.py",
@@ -190,10 +194,6 @@
     "var/devdata/artifacts/99",
     "var/devdata/artifacts/9b/9bc10ff4904ce8a7e7e0a80b040b2032a8ef53204629d5c2cd43afa9ac60e178",
     "var/devdata/artifacts/9b",
-    "var/devdata/artifacts/91/91d734f35ce726727de90b925e19c5d5c90c5bb733b02413331bc8b9bc7573ca",
-    "var/devdata/artifacts/91",
-    "var/devdata/artifacts/4e/4ee44887d1898e04b70072543eade8f3a2a0112e7204354f6cf9113416ced554",
-    "var/devdata/artifacts/4e",
     "engine/README.md"
   ]
 }
