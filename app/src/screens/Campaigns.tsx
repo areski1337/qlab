@@ -170,7 +170,7 @@ export function Pareto() {
   const [seg, setSeg] = useState("train");
   const [xk, setXk] = useState("max_dd_pct");
   const [yk, setYk] = useState("sharpe");
-  const c = useApi<any[]>(nav.campaign ? `/campaigns/${nav.campaign}/candidates?segment=${seg}` : null, [nav.campaign, seg], true);
+  const c = useApi<any[]>(nav.campaign ? `/campaigns/${nav.campaign}/candidates?segment=${seg}&limit=5000` : null, [nav.campaign, seg], true);
   const pts = (c.data ?? []).map((r) => ({ id: r.id, x: r.metrics[xk], y: r.metrics[yk], front: r.status !== "unverified" && r.status !== "rejected" }));
   const keys = ["sharpe", "max_dd_pct", "net_profit", "return_pct", "profit_factor", "expectancy_r", "win_rate", "n_trades", "r2_equity"];
   return (

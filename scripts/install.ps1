@@ -1,4 +1,4 @@
-# Installation QLab (Windows). Idempotent. Aucune donnée utilisateur n'est supprimée.
+﻿# Installation QLab (Windows). Idempotent. Aucune donnée utilisateur n'est supprimée.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 function Need($cmd, $hint) { if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { throw "$cmd introuvable : $hint" } }
