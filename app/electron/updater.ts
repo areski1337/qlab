@@ -76,7 +76,8 @@ async function ghAsset(src: string, name: string): Promise<Response> {
   const rel = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers: { ...h, Accept: "application/vnd.github+json" }, cache: "no-store" });
   if (rel.status === 404) throw new Error(t ? "aucune release publiée sur le dépôt" : "dépôt privé inaccessible : connecter GitHub CLI sur ce poste (gh auth login)");
   if (!rel.ok) throw new Error(`GitHub : HTTP ${rel.status}`);
-  const a = ((await rel.json()).assets ?? []).find((x: any) => x.name === name);
+  // GitHub remplace les espaces des noms d'assets par des points
+  const a = ((await rel.json()).assets ?? []).find((x: any) => x.name === name || x.name === name.replace(/ /g, "."));
   if (!a) throw new Error(`fichier ${name} absent de la dernière release`);
   return fetch(a.url, { headers: { ...h, Accept: "application/octet-stream" }, cache: "no-store" });
 }

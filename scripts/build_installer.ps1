@@ -50,7 +50,7 @@ if ($LASTEXITCODE -ne 0) { throw "electron-builder a échoué" }
 Pop-Location
 if ($NotesFile) { $Notes = [IO.File]::ReadAllText((Resolve-Path $NotesFile), [Text.Encoding]::UTF8).Trim() }
 $ver = (Get-Content "$root\app\package.json" -Raw | ConvertFrom-Json).version
-$exe = Get-Item "$root\app\release-installer\QLab Setup $ver.exe"
+$exe = Get-Item "$root\app\release-installer\QLab.Setup.$ver.exe"  # nom sans espace, identique à l'asset GitHub
 $manifest = [ordered]@{
     version = $ver; file = $exe.Name; size = $exe.Length
     sha512 = (Get-FileHash -Algorithm SHA512 $exe.FullName).Hash.ToLower()
