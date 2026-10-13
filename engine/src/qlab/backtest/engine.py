@@ -37,7 +37,8 @@ from .costs import spread_series, value_per_price_unit
 
 
 def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskController,
-        initial_equity: float = 10_000.0, start: int = 0, stop: int | None = None) -> dict:
+        initial_equity: float = 10_000.0, start: int = 0, stop: int | None = None,
+        signals_override: tuple[np.ndarray, np.ndarray] | None = None) -> dict:
     """Backtest sur les barres [start, stop). Les features sont calculées sur toute la série
     disponible jusqu'à `stop` exclusivement côté décision (les entrées n'ont lieu que dans la fenêtre)."""
     b = cache.bars
@@ -49,7 +50,8 @@ def run(genome: dict, cache: FeatureCache, cost_profile: dict, risk: RiskControl
     comm = float(cost_profile.get("commission_per_lot_side", 0.0))
     ex = genome["exit"]
     mg = genome["management"]
-    long_sig, short_sig = signals(genome, cache)
+    # signals_override : entrées imposées (baselines aléatoires), mêmes règles de sortie et de risque.
+    long_sig, short_sig = signals_override if signals_override is not None else signals(genome, cache)
     days = trading_day(b.ts)
 
     st_cfg = ex["stop"]
