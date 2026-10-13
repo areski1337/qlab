@@ -10,3 +10,4 @@ var/
 *.ex5
 dist-electron/
 release/
+.obsidian/workspace.json
