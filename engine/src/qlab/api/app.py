@@ -34,7 +34,7 @@ app = FastAPI(title="QLab API", version="1.0", docs_url=None, redoc_url=None, op
 @app.middleware("http")
 async def auth(request: Request, call_next):
     tok = request.headers.get("x-qlab-token", "")
-    if not STATE["token"] or not hmac.compare_digest(tok, STATE["token"]):
+    if not STATE["token"] or not hmac.compare_digest(tok.encode(), STATE["token"].encode()):
         return JSONResponse({"error": "jeton invalide"}, status_code=401)
     return await call_next(request)
 
