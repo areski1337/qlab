@@ -2,6 +2,12 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des composants : `engine/src/qlab/core/versions.py`.
 
+## [0.6.2] — 2026-10-15
+### Corrigé
+- API : un jeton contenant un caractère non ASCII est refusé (401) au lieu de provoquer une erreur 500.
+### Tests
+- Six tests de non-régression des correctifs 0.6.1 (décision OOS en R net, transfert daté, pause des expériences, N du passeport, portefeuilles, fichier d'arrêt de l'EA).
+
 ## [0.6.1] — 2026-10-14
 Correctifs issus de la revue produit continue (cycles 2 et 3, `product-intelligence/audits/`).
 ### Corrigé
