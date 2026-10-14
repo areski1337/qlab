@@ -194,7 +194,8 @@ app.whenReady().then(async () => {
     if (typeof method !== "string" || typeof p !== "string") throw new Error("arguments invalides");
     return apiRequest(method, p, body);
   });
-  ipcMain.handle("qlab:reveal-export", async (_e, p: unknown) => {
+  ipcMain.handle("qlab:reveal-export", async (e, p: unknown) => {
+    if (!e.senderFrame?.url.startsWith("app://bundle/")) throw new Error("origine refusée");
     // n'ouvre que des fichiers du répertoire d'exports du moteur (chemin validé côté moteur)
     const h = await apiRequest("GET", "/api/v1/health");
     const root = (h.data as { data_dir?: string }).data_dir;
@@ -204,7 +205,10 @@ app.whenReady().then(async () => {
     shell.showItemInFolder(target);
     return true;
   });
-  ipcMain.handle("qlab:engine-log", async () => engineLog.join("").slice(-4000));
+  ipcMain.handle("qlab:engine-log", async (e) => {
+    if (!e.senderFrame?.url.startsWith("app://bundle/")) throw new Error("origine refusée");
+    return engineLog.join("").slice(-4000);
+  });
   // Mises à jour : même contrôle d'origine que l'API ; l'installation exige un fichier vérifié (SHA-512).
   ipcMain.handle("qlab:update", async (e, op: unknown, arg: unknown) => {
     if (!e.senderFrame?.url.startsWith("app://bundle/")) throw new Error("origine refusée");

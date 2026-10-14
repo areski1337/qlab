@@ -1,7 +1,7 @@
 ﻿# Construit l'installateur Windows autonome (NSIS) : Python 3.13 standalone + dépendances embarqués.
 # La machine cible n'a besoin ni de uv ni de Python. Usage : powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 #   -Version 0.2.0         fixe la version de l'application (app\package.json) avant le build
-#   -Publish <dossier>     copie l'installateur puis latest.json (version, fichier, taille, SHA-512, notes)
+#   -Publish <dossier>     copie l'installateur puis latest.json signé (version, fichier, taille, SHA-512, signature Ed25519, notes)
 #                          dans la source de mises à jour lue par l'application
 #   -Notes "..."           notes de version affichées dans l'application
 #   -NotesFile notes.txt   idem depuis un fichier UTF-8 (accents préservés, contrairement aux arguments de Windows PowerShell)
@@ -57,6 +57,9 @@ $manifest = [ordered]@{
     released_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"); notes = $Notes
 }
 [IO.File]::WriteAllText("$root\app\release-installer\latest.json", ($manifest | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+# Signature Ed25519 (clé privée locale ~/.qlab/update_ed25519.pem) : l'application refuse tout manifeste non signé.
+node "$root\scripts\sign_manifest.mjs" "$root\app\release-installer\latest.json"
+if ($LASTEXITCODE -ne 0) { throw "signature du manifeste échouée" }
 Write-Host "Installateur : $($exe.FullName) ($([math]::Round($exe.Length / 1MB)) Mo)"
 if ($Publish) {
     New-Item -ItemType Directory -Force $Publish | Out-Null

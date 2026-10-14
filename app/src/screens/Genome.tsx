@@ -187,10 +187,10 @@ const CHECKS: Record<string, { label: string; thr: (c: any) => number; higher: b
   walk_forward: { label: "Walk-forward", thr: (c) => c.wf_positive_folds_ratio, higher: true, unit: "plis positifs", pct: true, why: "Mêmes règles sur des périodes successives : part des périodes gagnantes." },
   walk_forward_reopt: { label: "Walk-forward ré-optimisé", thr: (c) => c.wfo_positive_folds_ratio, higher: true, unit: "plis positifs", pct: true, why: "Paramètres ré-ajustés sur le passé puis testés sur la suite : la méthode tient-elle ?" },
   sensitivity: { label: "Sensibilité", thr: (c) => c.sensitivity_positive_ratio, higher: true, unit: "voisins positifs", pct: true, why: "Petites variations des paramètres : une bonne stratégie ne s'effondre pas." },
-  "cost_stress_x1.5": { label: "Coûts ×1,5", thr: () => 0, higher: true, unit: "espérance", why: "Reste-t-elle gagnante si le spread est 50 % plus cher ?" },
+  "cost_stress_x1.5": { label: "Coûts ×1,5", thr: () => 0, higher: true, unit: "espérance", why: "Reste-t-elle gagnante si le spread réel est multiplié par 1,5 ?" },
   mc_p95_max_dd: { label: "Drawdown Monte Carlo p95", thr: (c) => c.mc_p95_max_dd_pct, higher: false, unit: "%", why: "Pire drawdown plausible (95 %) en rebattant l'ordre des trades." },
   random_baseline: { label: "Contre le hasard", thr: (c) => c.random_baseline_p_max, higher: false, unit: "p-valeur", why: "Probabilité que des entrées aléatoires fassent aussi bien. Basse = bon." },
-  deflated_sharpe: { label: "Sharpe dégonflé (DSR)", thr: (c) => c.dsr_min, higher: true, unit: "probabilité", why: "Sharpe corrigé du nombre d'essais de la campagne (biais de sélection)." },
+  deflated_sharpe: { label: "Sharpe dégonflé (DSR)", thr: (c) => c.dsr_min, higher: true, unit: "probabilité", why: "Sharpe (fenêtre train) corrigé du nombre de stratégies essayées sur cette série, toutes campagnes confondues (biais de sélection)." },
 };
 
 function CheckRow({ k, c, crit }: { k: string; c: { value: number | null; pass: boolean | null }; crit: any }) {
@@ -226,18 +226,18 @@ function Robustness({ sha }: { sha: string }) {
     <>
       <Card title={<>Rapport de robustesse {rep.passed ? <Badge s="completed" /> : <Badge s="rejected" />}</>} wide>
         <div className="checks">{Object.entries(rep.checks).map(([k, c]: any) => <CheckRow key={k} k={k} c={c} crit={crit} />)}</div>
-        <Explain>Chaque ligne = un test de stress. La barre montre la valeur obtenue ; le <b>trait jaune</b> est le seuil exigé. Il faut <b>tous</b> les tests au vert pour passer « robustesse testée ». Survoler une ligne explique le test.</Explain>
+        <Explain>Chaque ligne = un test de stress. La barre montre la valeur obtenue ; le <b>trait jaune</b> est le seuil exigé. Il faut <b>tous</b> les tests au vert pour passer « robustesse testée ». Les tests sont exécutés du moins coûteux au plus coûteux : après un premier échec, les suivants ne sont pas lancés (« ? »). Survoler une ligne explique le test.</Explain>
       </Card>
       <Card title="Walk-forward : profit par période de test">
         <Bars unit="profit net" items={(rep.walk_forward?.folds ?? []).map((f: any) => ({ label: `pli ${f.fold}`, value: f.net_profit, tip: `${f.n_trades} trades · Sharpe ${fmt(f.sharpe)} · PF ${fmt(f.profit_factor)}` }))} />
-        <Explain>La période de recherche est découpée en tranches successives, testées avec <b>les mêmes règles</b>. Des barres majoritairement vertes = l'avantage n'est pas concentré sur une seule période chanceuse.</Explain>
+        <Explain>La période de recherche est découpée en tranches successives, testées avec <b>les mêmes règles</b>. Des barres majoritairement vertes = l'avantage n'est pas concentré sur une seule période chanceuse. <b>Test in-sample</b> : ces périodes ont servi à découvrir la stratégie ; ce n'est pas une preuve hors échantillon.</Explain>
       </Card>
       <Card title={`Walk-forward ré-optimisé · WFE ${wfo?.wfe == null ? "—" : fmt(wfo.wfe, 2)}`}>
         <Bars unit="Sharpe" items={(wfo?.folds ?? []).flatMap((f: any) => [
           { label: `p${f.fold} appr.`, value: f.fit_sharpe, muted: true, tip: "Sharpe sur la fenêtre d'apprentissage (jeu retenu)" },
           { label: `p${f.fold} test`, value: f.sharpe, tip: `${f.n_trades} trades · net ${fmt(f.net_profit)}${f.chosen_is_original ? "\nparamètres d'origine conservés" : "\nparamètres ré-ajustés"}` },
         ])} />
-        <Explain>Gris = performance sur la période d'apprentissage ; couleur = sur la période suivante, jamais vue. <b>WFE</b> = test / apprentissage : proche de 1 = ce qui est appris se transfère ; proche de 0 ou négatif = surapprentissage.</Explain>
+        <Explain>Gris = performance sur la période d'apprentissage ; couleur = sur la période suivante, non utilisée pour ré-ajuster les paramètres (mais incluse dans la recherche de la structure : test in-sample). <b>WFE</b> = test / apprentissage : proche de 1 = ce qui est appris se transfère ; proche de 0 ou négatif = surapprentissage.</Explain>
       </Card>
       {mc?.available && <Card title="Monte Carlo (1 000 tirages)">
         <Ranges rows={[
@@ -257,11 +257,11 @@ function Robustness({ sha }: { sha: string }) {
       </Card>
       <Card title="Stress de coûts">
         <Bars unit="espérance / trade" items={[{ label: "base", value: rep.base?.expectancy, tip: "coûts de la campagne" },
-          ...Object.entries(cs).filter(([k]) => !k.startsWith("_")).map(([k, v]: any) => ({ label: k, value: v.expectancy, tip: `${v.n_trades} trades · net ${fmt(v.net_profit)}` }))]} />
+          ...Object.entries(cs).filter(([k, v]) => !k.startsWith("_") && typeof v === "object").map(([k, v]: any) => ({ label: k, value: v.expectancy, tip: `${v.n_trades} trades · net ${fmt(v.net_profit)}` }))]} />
         <Explain>Même stratégie avec des coûts dégradés (spread ×1,5 / ×2, glissement, commission). Si l'espérance passe sous zéro dès ×1,5, l'avantage est trop mince pour le réel. {cs._note}</Explain>
       </Card>
       {ds?.available && <div className="tiles" style={{ gridColumn: "1 / -1" }}>
-        <Tile l="Sharpe dégonflé" v={fmt(ds.dsr, 3)} tone={ds.dsr >= (crit.dsr_min ?? 0.9) ? "good" : "bad"} s={`seuil ${fmt(crit.dsr_min, 2)} · ${ds.n_trials} essais`}
+        <Tile l="Sharpe dégonflé" v={fmt(ds.dsr, 3)} tone={ds.dsr >= (crit.dsr_min ?? 0.9) ? "good" : "bad"} s={`seuil ${fmt(crit.dsr_min, 2)} · ${ds.n_trials} essais sur la série`}
           hint="Probabilité que le vrai Sharpe soit positif, compte tenu du nombre de stratégies essayées." />
         <Tile l="Sharpe journalier" v={fmt(ds.sr_daily, 4)} s={`vs ${fmt(ds.sr0_daily, 4)} attendu par chance`} />
         <Tile l="Asymétrie" v={fmt(ds.skew, 2)} s="négative = pertes rares mais fortes" />

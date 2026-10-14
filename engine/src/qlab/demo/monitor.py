@@ -11,7 +11,14 @@ Critères de dégradation (pré-déclarés, versionnés avec 'risk_controller') 
   de référence (min 10 trades observés) ;
 - drawdown observé au-delà du p95 Monte Carlo de référence ;
 - distribution des R différente (Kolmogorov–Smirnov à deux échantillons, p < 0,01) ;
-- dérive des coûts : commission+swap moyens par lot > 1,5 × la référence.
+- dérive des coûts : commission+swap par lot plus défavorables que la référence de
+  plus de max(50 % de la référence, 5 % du risque moyen par lot) ;
+- exécution : glissement moyen à l'entrée (prix réel vs ouverture de la barre) supérieur
+  à 50 % du spread médian observé (min 10 transactions).
+R observé exact : PnL brut / (|entrée − stop initial de l'ordre| × valeur du point × lots) ;
+à défaut de stop lisible, approximation par le risque moyen par lot de la référence (signalée).
+Paliers de risque : chaque montée exige PROMOTION["min_trades"] transactions NOUVELLES depuis
+le début du palier courant, sans alerte.
 """
 from __future__ import annotations
 
@@ -27,7 +34,9 @@ from ..genome import store as gstore
 from ..storage.db import audit
 
 STAGES = (0.25, 0.5, 1.0)
-PROMOTION = {"min_trades": 20, "no_alerts": True}
+PROMOTION = {"min_trades": 20, "no_alerts": True, "new_trades_per_stage": True}
+SLIPPAGE_ALERT_SPREAD_RATIO = 0.5
+COST_DRIFT = {"relative": 0.5, "risk_fraction": 0.05}
 
 
 def ks_2samp(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
@@ -47,8 +56,8 @@ def ks_2samp(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
 
 
 def degradation(ref_trades: list[dict], live: list[dict], ref_mc_dd_p95: float | None, eq0: float,
-                seed: int = 0) -> dict:
-    """ref_trades / live : dicts avec 'r', 'pnl', 'lots', 'costs'."""
+                seed: int = 0, risk_per_lot: float | None = None) -> dict:
+    """ref_trades / live : dicts avec 'r', 'pnl', 'lots', 'costs' (live : 'slippage_pts', 'spread_pts' facultatifs)."""
     alerts, checks = [], {}
     r_ref = np.array([t["r"] for t in ref_trades])
     r_live = np.array([t["r"] for t in live])
@@ -77,10 +86,21 @@ def degradation(ref_trades: list[dict], live: list[dict], ref_mc_dd_p95: float |
         if lots and ref_lots:
             c_live = sum(t["costs"] for t in live) / lots
             c_ref = sum(t["costs"] for t in ref_trades) / ref_lots
-            checks["cost_per_lot"] = {"live": c_live, "ref": c_ref}
-            if c_ref < 0 and c_live < 1.5 * c_ref:  # coûts négatifs (débits)
-                alerts.append("dérive des coûts (> 1,5 × référence)")
-    return {"alerts": alerts, "checks": checks, "n_live": len(live), "criteria_version": "1.0"}
+            # coûts signés : négatif = débit. Tolérance : 50 % de la référence, au moins 5 % du risque moyen par lot.
+            tol = max(COST_DRIFT["relative"] * abs(c_ref), COST_DRIFT["risk_fraction"] * (risk_per_lot or 0.0))
+            checks["cost_per_lot"] = {"live": c_live, "ref": c_ref, "tolerance": tol}
+            if c_ref - c_live > tol and tol > 0:
+                alerts.append("dérive des coûts (plus défavorables que la référence au-delà de la tolérance)")
+        slip = [t["slippage_pts"] for t in live if t.get("slippage_pts") is not None]
+        spr = [t["spread_pts"] for t in live if t.get("spread_pts")]
+        if len(slip) >= 10 and spr:
+            lim = SLIPPAGE_ALERT_SPREAD_RATIO * float(np.median(spr))
+            checks["execution"] = {"mean_slippage_pts": float(np.mean(slip)), "limit_pts": lim, "n": len(slip)}
+            if np.mean(slip) > lim:
+                alerts.append("glissement d'exécution moyen supérieur à 50 % du spread médian")
+        else:
+            checks["execution"] = {"note": "moins de 10 transactions avec prix de référence : non évaluable"}
+    return {"alerts": alerts, "checks": checks, "n_live": len(live), "criteria_version": "1.1"}
 
 
 def flag_path(lab, magic: int | None = None) -> Path:
@@ -101,6 +121,31 @@ def set_flag(lab, magic: int | None, on: bool, reason: str) -> dict:
         p.unlink(missing_ok=True)
     audit(lab.con, "demo.flag", str(magic) if magic else "ALL", on=on, reason=reason, path=str(p))
     return {"path": str(p), "active": p.exists()}
+
+
+def guard_states(lab) -> list[dict]:
+    """État des gardes compte persistantes des EA (fichiers QLab/guard_<login>.csv du dossier commun MT5, lecture seule)."""
+    out = []
+    for f in sorted(flag_path(lab).parent.glob("guard_*.csv")):
+        try:
+            peak, halted, day, ds = f.read_text(encoding="ascii").strip().split(";")[:4]
+            login = f.stem.removeprefix("guard_")
+            out.append({"login": login, "account_masked": f"***{login[-3:]}", "peak_equity": float(peak),
+                        "halted": halted == "1", "day_start_equity": float(ds), "day": int(day)})
+        except (ValueError, OSError) as e:
+            out.append({"file": f.name, "error": str(e)})
+    return out
+
+
+def reset_guard(lab, login: str, reason: str) -> dict:
+    """Lève l'arrêt persistant de la garde compte (action manuelle tracée) : l'EA repart du niveau d'équité actuel."""
+    if not login.isdigit():
+        raise ValueError("login invalide")
+    p = flag_path(lab).parent / f"guard_{login}.csv"
+    existed = p.exists()
+    p.unlink(missing_ok=True)
+    audit(lab.con, "demo.guard_reset", f"***{login[-3:]}", reason=reason, existed=existed)
+    return {"reset": existed}
 
 
 def publish_news_files(lab) -> list[str]:
@@ -132,36 +177,72 @@ def register(lab, rev_id: str) -> dict:
     did = new_id("demo")
     magic = json.loads(ea["meta_json"])["magic"]
     now = utc_now_iso()
-    lab.con.execute("INSERT INTO demo_deployments VALUES (?,?,?,?,?,?,?,?,?,?)",
+    lab.con.execute("INSERT INTO demo_deployments (id, revision_id, ea_id, magic, server, account_masked, risk_stage, "
+                    "state, started_at, updated_at, stage_base_trades) VALUES (?,?,?,?,?,?,?,?,?,?,0)",
                     (did, rev_id, ea["id"], magic, None, None, STAGES[0], "registered", now, now))
     audit(lab.con, "demo.registered", did, revision=rev_id, magic=magic)
     return dict(lab.con.execute("SELECT * FROM demo_deployments WHERE id=?", (did,)).fetchone())
 
 
-def fetch_live_trades(lab, magic: int, since_utc: float) -> tuple[list[dict], dict]:
+def live_r(profit: float, entry: float, sl: float, volume: float, tick_value: float, tick_size: float) -> float | None:
+    """R exact d'une transaction : PnL brut / risque initial (stop de l'ordre d'entrée)."""
+    if not (sl and tick_size and volume) or entry == sl:
+        return None
+    return profit / (abs(entry - sl) * tick_value / tick_size * volume)
+
+
+def entry_slippage(price: float, direction: int, bar_open: float, bar_spread_pts: float, point: float) -> float:
+    """Glissement à l'entrée en points (positif = défavorable) : achat attendu à l'ouverture Ask, vente à l'ouverture Bid."""
+    expected = bar_open + (bar_spread_pts * point if direction == 1 else 0.0)
+    return (price - expected) * direction / point
+
+
+def fetch_live_trades(lab, magic: int, since_utc: float, symbol: str | None = None,
+                      timeframe: str | None = None) -> tuple[list[dict], dict]:
     """Lit l'historique de deals du compte connecté (lecture seule). Refuse un compte réel."""
     import datetime as dt
-    from ..data.mt5_source import mt5_session
+    from ..data.mt5_source import TF_MAP, mt5_session
     with mt5_session(lab.settings["mt5"]["terminal_path"]) as mt5:
         ai = mt5.account_info()
         if ai is None:
             raise RuntimeError("aucun compte connecté")
         if ai.trade_mode == 2:
             raise PermissionError("compte RÉEL détecté : l'observation est réservée aux comptes démo")
-        deals = mt5.history_deals_get(dt.datetime.fromtimestamp(since_utc, dt.timezone.utc),
-                                      dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)) or []
+        t0 = dt.datetime.fromtimestamp(since_utc, dt.timezone.utc)
+        t1 = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)
+        deals = mt5.history_deals_get(t0, t1) or []
         acc = {"server": ai.server, "account_masked": f"***{str(ai.login)[-3:]}", "mode": "demo"}
+        mine = sorted((d for d in deals if d.magic == magic), key=lambda d: d.time)
+        si = mt5.symbol_info(symbol or (mine[0].symbol if mine else "")) if (symbol or mine) else None
+        rates = None
+        if si is not None and timeframe in TF_MAP and mine:
+            rates = mt5.copy_rates_range(si.name, getattr(mt5, TF_MAP[timeframe]), t0 - dt.timedelta(days=1), t1)
+        sl_of = {}
+        for d in mine:
+            if d.entry == 0:
+                o = mt5.history_orders_get(ticket=d.order) or []
+                sl_of[d.position_id] = float(o[0].sl) if o else 0.0
     by_pos: dict[int, dict] = {}
     out = []
-    for d in sorted((d for d in deals if d.magic == magic), key=lambda d: d.time):
+    for d in mine:
         if d.entry == 0:
             by_pos[d.position_id] = {"in": d}
         elif d.position_id in by_pos:
             i = by_pos.pop(d.position_id)["in"]
             costs = d.commission + i.commission + d.swap
-            out.append({"entry_time": int(i.time), "exit_time": int(d.time), "dir": 1 if i.type == 0 else -1,
-                        "lots": i.volume, "pnl": d.profit + costs, "costs": costs, "r": None, "entry": i.price,
-                        "exit": d.price})
+            direction = 1 if i.type == 0 else -1
+            r = live_r(d.profit, i.price, sl_of.get(d.position_id, 0.0), i.volume,
+                       si.trade_tick_value, si.trade_tick_size) if si is not None else None
+            slip = spread = None
+            if rates is not None and len(rates):
+                k = int(np.searchsorted(rates["time"], i.time, side="right")) - 1
+                if k >= 0:
+                    spread = float(rates["spread"][k])
+                    slip = entry_slippage(i.price, direction, float(rates["open"][k]), spread, si.point)
+            out.append({"entry_time": int(i.time), "exit_time": int(d.time), "dir": direction,
+                        "lots": i.volume, "pnl": d.profit + costs, "costs": costs, "r": r,
+                        "r_source": "exact" if r is not None else None, "entry": i.price, "exit": d.price,
+                        "slippage_pts": slip, "spread_pts": spread})
     return out, acc
 
 
@@ -183,18 +264,30 @@ def observe(lab, deployment_id: str, live: list[dict] | None = None, account: di
         p95 = mc["bootstrap_max_dd_pct"]["p95"] if mc.get("available") else None
     if live is None:
         from ..core.timeutil import iso_to_ts
-        live, account = fetch_live_trades(lab, dep["magic"], iso_to_ts(dep["started_at"]))
-    # R observé : PnL brut / risque de référence moyen par lot (approximation documentée)
-    risk_per_lot = np.mean([t["risk_amount"] / t["lots"] for t in ref]) if ref else None
+        rev = gstore.get(lab.con, dep["revision_id"])
+        sym = lab.con.execute("SELECT symbol FROM ea_artifacts WHERE id=?", (dep["ea_id"],)).fetchone()
+        live, account = fetch_live_trades(lab, dep["magic"], iso_to_ts(dep["started_at"]), sym[0] if sym else None,
+                                          rev["content"]["market"]["timeframe"])
+    risk_per_lot = float(np.mean([t["risk_amount"] / t["lots"] for t in ref])) if ref else None
+    n_approx = 0
     for t in live:
         if t.get("r") is None and risk_per_lot:
+            # repli : stop initial illisible → risque moyen par lot de la référence (approximation signalée)
             t["r"] = (t["pnl"] - t["costs"]) / (risk_per_lot * t["lots"])
-    rep = degradation(ref_t, live, p95, eq0)
+            t["r_source"] = "approx"
+            n_approx += 1
+    rep = degradation(ref_t, live, p95, eq0, risk_per_lot=risk_per_lot)
     rep["risk_stage"] = dep["risk_stage"]
     rep["account"] = account
-    rep["r_approximation"] = "R observé = PnL brut / (risque moyen par lot de la référence OOS × lots)"
+    rep["r_exact"] = len(live) - n_approx
+    rep["r_approx"] = n_approx
+    if n_approx:
+        rep["r_approximation"] = "R observé = PnL brut / (risque moyen par lot de la référence OOS × lots) pour les " \
+                                 f"{n_approx} transaction(s) sans stop initial lisible"
+    base = int(dep.get("stage_base_trades") or 0)
+    rep["stage_trades"] = max(0, rep["n_live"] - base)
     nxt = None
-    if not rep["alerts"] and rep["n_live"] >= PROMOTION["min_trades"] and dep["risk_stage"] < 1.0:
+    if not rep["alerts"] and rep["stage_trades"] >= PROMOTION["min_trades"] and dep["risk_stage"] < 1.0:
         nxt = STAGES[STAGES.index(dep["risk_stage"]) + 1]
     rep["next_risk_stage_allowed"] = nxt
     oid = new_id("obs")
@@ -226,9 +319,15 @@ def promote_stage(lab, deployment_id: str) -> dict:
                            (deployment_id,)).fetchone()
     if last is None:
         raise PermissionError("aucune observation : promotion impossible")
-    nxt = json.loads(last[0]).get("next_risk_stage_allowed")
-    if not nxt:
-        raise PermissionError("critères de montée du risque non remplis")
-    lab.con.execute("UPDATE demo_deployments SET risk_stage=?, updated_at=? WHERE id=?", (nxt, utc_now_iso(), deployment_id))
-    audit(lab.con, "demo.risk_stage", deployment_id, stage=nxt)
+    obs = json.loads(last[0])
+    dep = lab.con.execute("SELECT risk_stage FROM demo_deployments WHERE id=?", (deployment_id,)).fetchone()
+    nxt = obs.get("next_risk_stage_allowed")
+    # une observation n'autorise qu'une montée, depuis le palier où elle a été faite
+    if not nxt or dep is None or obs.get("risk_stage") != dep["risk_stage"]:
+        raise PermissionError("critères de montée du risque non remplis (nouvelle observation requise)")
+    base = int(obs.get("n_live") or 0)
+    # les transactions déjà comptées ne serviront plus pour le palier suivant
+    lab.con.execute("UPDATE demo_deployments SET risk_stage=?, stage_base_trades=?, updated_at=? WHERE id=?",
+                    (nxt, base, utc_now_iso(), deployment_id))
+    audit(lab.con, "demo.risk_stage", deployment_id, stage=nxt, stage_base_trades=base)
     return {"risk_stage": nxt, "instruction": f"régler InpRiskScale={nxt} dans les paramètres de l'EA (ne peut pas dépasser 1)"}

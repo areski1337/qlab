@@ -2,15 +2,17 @@
 // dans une source : par défaut les releases GitHub du dépôt QLab (github:propriétaire/dépôt), sinon un dossier
 // local / partage réseau ou une URL https choisis par l'utilisateur. Télécharge
 // l'installateur, vérifie son empreinte SHA-512 et ne l'exécute qu'à la demande explicite de l'utilisateur.
+// Authenticité : le manifeste doit porter une signature Ed25519 (scripts/sign_manifest.mjs) vérifiée avec la clé
+// publique figée ci-dessous ; un manifeste non signé ou signé par une autre clé est refusé, quelle que soit la source.
 // Les données (base, artefacts, datasets) vivent hors du dossier d'installation : la mise à jour ne les touche
 // pas ; les migrations de base s'appliquent au redémarrage du moteur, avec sauvegarde préalable.
 import { app } from "electron";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export type Manifest = { version: string; file: string; sha512: string; size: number; released_at?: string; notes?: string };
+export type Manifest = { version: string; file: string; sha512: string; size: number; signature: string; released_at?: string; notes?: string };
 export type UpdateState = {
   current: string; source: string | null; checked_at: string | null; available: Manifest | null;
   downloaded: string | null; progress: number | null; error: string | null;
@@ -21,6 +23,24 @@ const DIR = () => path.join(app.getPath("userData"), "updates");
 const FILE_RE = /^[A-Za-z0-9 ._-]+\.exe$/;
 const GH_RE = /^github:([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)$/;
 export const DEFAULT_SOURCE = "github:areski1337/qlab";  // releases publiées par scripts/build_installer.ps1 -Release
+// Clé publique de signature des mises à jour (clé privée : ~/.qlab/update_ed25519.pem du poste de publication).
+export const UPDATE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEANauzLUHssWkwhh5i5rvwR78nAdqOwI4icLCiWZeuDts=
+-----END PUBLIC KEY-----`;
+
+// Doit rester identique à payload() dans scripts/sign_manifest.mjs.
+export const signaturePayload = (m: Pick<Manifest, "version" | "file" | "size" | "sha512">) =>
+  `qlab-update-v1
+${m.version}
+${m.file}
+${m.size}
+${m.sha512}`;
+
+export function signatureValid(m: Manifest, publicKeyPem: string = UPDATE_PUBLIC_KEY): boolean {
+  try {
+    return verify(null, Buffer.from(signaturePayload(m), "utf-8"), createPublicKey(publicKeyPem), Buffer.from(m.signature, "base64"));
+  } catch { return false; }
+}
 
 const state: UpdateState = { current: "", source: null, checked_at: null, available: null,
   downloaded: null, progress: null, error: null };
@@ -96,7 +116,8 @@ async function readText(src: string, name: string): Promise<string> {
 export function validManifest(m: any): m is Manifest {
   return m && typeof m.version === "string" && /^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$/.test(m.version)
     && typeof m.file === "string" && FILE_RE.test(m.file) && typeof m.sha512 === "string"
-    && /^[0-9a-f]{128}$/.test(m.sha512) && Number.isInteger(m.size) && m.size > 0;
+    && /^[0-9a-f]{128}$/.test(m.sha512) && Number.isInteger(m.size) && m.size > 0
+    && typeof m.signature === "string" && /^[A-Za-z0-9+/]{86}==$/.test(m.signature);
 }
 
 export async function check(): Promise<UpdateState> {
@@ -106,7 +127,8 @@ export async function check(): Promise<UpdateState> {
   if (!src) { state.available = null; return status(); }
   try {
     const m = JSON.parse((await readText(src, "latest.json")).replace(/^﻿/, ""));
-    if (!validManifest(m)) throw new Error("manifeste latest.json invalide");
+    if (!validManifest(m)) throw new Error("manifeste latest.json invalide ou non signé");
+    if (!signatureValid(m)) throw new Error("signature du manifeste invalide : mise à jour refusée");
     state.available = newer(m.version, app.getVersion()) ? m : null;
     if (state.downloaded && state.available?.file !== path.basename(state.downloaded)) state.downloaded = null;
   } catch (e) {
@@ -160,8 +182,8 @@ export async function download(onProgress: (s: UpdateState) => void): Promise<Up
 // Lance l'installateur NSIS en mode silencieux (même dossier d'installation, --force-run relance QLab),
 // puis l'appelant quitte l'application (le moteur est arrêté par will-quit).
 export function install(): void {
-  const f = state.downloaded;
-  if (!f || !fs.existsSync(f)) throw new Error("aucun installateur vérifié");
+  const f = state.downloaded, m = state.available;
+  if (!f || !fs.existsSync(f) || !m || !signatureValid(m)) throw new Error("aucun installateur vérifié");
   if (!app.isPackaged) throw new Error("installation désactivée en développement (application non empaquetée)");
   spawn(f, ["/S", "--updated", "--force-run"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
 }

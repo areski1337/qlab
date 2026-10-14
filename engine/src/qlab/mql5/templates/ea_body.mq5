@@ -170,6 +170,50 @@ string QL_RiskCheck(const long day, const double lots, const double spread_pts)
    return "";
 }
 
+// ---- garde compte (hors Strategy Tester) : persistante, en ÉQUITÉ, commune à tous les EA QLab du compte ----
+// Fichier commun QLab\guard_<login>.csv : pic;arrêt;jour;équité de début de jour. Survit aux redémarrages ;
+// l'arrêt sur drawdown n'est levé qu'en supprimant ce fichier. Non reproduite par le moteur de référence
+// (ADR-015) : désactivée dans le testeur, donc sans effet sur la parité.
+bool QL_GuardActive() { return !(bool)MQLInfoInteger(MQL_TESTER) && !(bool)MQLInfoInteger(MQL_OPTIMIZATION); }
+string QL_GuardFile() { return "QLab\\guard_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv"; }
+
+void QL_GuardRead(double &peak, bool &halted, long &day, double &day_start)
+{
+   peak = 0.0; halted = false; day = -1; day_start = 0.0;
+   int h = FileOpen(QL_GuardFile(), FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE);
+   if(h == INVALID_HANDLE) return;
+   string line = FileReadString(h);
+   FileClose(h);
+   string f[];
+   if(StringSplit(line, ';', f) < 4) return;
+   peak = StringToDouble(f[0]); halted = (f[1] == "1"); day = StringToInteger(f[2]); day_start = StringToDouble(f[3]);
+}
+
+void QL_GuardWrite(const double peak, const bool halted, const long day, const double day_start)
+{
+   int h = FileOpen(QL_GuardFile(), FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ);
+   if(h == INVALID_HANDLE) return;
+   FileWriteString(h, StringFormat("%.2f;%d;%I64d;%.2f", peak, halted ? 1 : 0, day, day_start));
+   FileClose(h);
+}
+
+// Met à jour l'état persistant (pic d'équité, arrêt, début de journée) ; refus motivé ou "".
+string QL_AccountGuard(const long day)
+{
+   if(!QL_GuardActive()) return "";
+   double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(!(eq > 0)) return "guard:equity_invalid";
+   double peak, ds; bool halted; long d;
+   QL_GuardRead(peak, halted, d, ds);
+   if(eq > peak) peak = eq;
+   if(d != day || !(ds > 0)) { d = day; ds = eq; }
+   if(!halted && (peak - eq) / peak * 100.0 >= QL_LIM_MAX_DD_PCT) halted = true;
+   QL_GuardWrite(peak, halted, d, ds);
+   if(halted) return "guard:max_drawdown_halt";
+   if((ds - eq) / ds * 100.0 >= QL_LIM_MAX_DAILY_LOSS_PCT) return "guard:daily_loss_limit";
+   return "";
+}
+
 void OnTick()
 {
    datetime bt = iTime(_Symbol, QL_GEN_TF, 0);
@@ -177,6 +221,7 @@ void OnTick()
    g_last_bar = bt;
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    if(bal > g_peak) g_peak = bal;
+   string guard = QL_AccountGuard(QL_TradingDay(QL_ServerToUTC((long)bt)));
 
    bool has = QL_HasPosition();
    if(g_had_pos && !has) g_last_exit_bar = QL_LastExitBar();   // sortie serveur (stop/objectif)
@@ -253,10 +298,13 @@ void OnTick()
       if(!g_news_ok || !QL_InIntervals(g_cov_a, g_cov_b, g_ncov, t_entry)) { QL_Trace("SKIP;risk:news_data_unavailable"); return; }
       if(QL_InIntervals(g_blk_a, g_blk_b, g_nblk, t_entry)) { QL_Trace("SKIP;risk:news_window"); return; }
    }
+   if(guard != "") { QL_Trace("SKIP;" + guard); return; }
    // Arrêt d'urgence global / suspension de cette stratégie : plus aucune entrée (positions existantes conservées).
    if(FileIsExist("QLab\\EMERGENCY_STOP", FILE_COMMON)) { QL_Trace("SKIP;emergency_stop"); return; }
    if(FileIsExist("QLab\\suspend_" + IntegerToString(QL_GEN_MAGIC) + ".flag", FILE_COMMON)) { QL_Trace("SKIP;suspended"); return; }
 
+   // Revérifié avant chaque ordre (pas seulement à l'initialisation).
+   if(AccountInfoInteger(ACCOUNT_TRADE_MODE) == ACCOUNT_TRADE_MODE_REAL) { QL_Trace("SKIP;real_account"); return; }
    MqlTick tk;
    if(!SymbolInfoTick(_Symbol, tk)) return;
    double entry = d == 1 ? tk.ask : tk.bid;

@@ -17,15 +17,15 @@ COMPONENT_VERSIONS: dict[str, str] = {
     "feature_engine": "1.0",
     "regime_engine": "1.0",
     "backtester_reference": "1.1",  # 1.1 : résolution M1, week-end, annonces, profil d'exécution
-    "cost_model": "1.0",
+    "cost_model": "1.1",  # 1.1 : spread_scale (stress multiplicatif)
     "metrics": "1.0",
-    "validation_protocol": "1.0",
+    "validation_protocol": "1.1",  # 1.1 : frontières datées par série, OOS corrigé de la multiplicité, DSR par série
     "evolution_operators": "1.0",
     "nsga2": "1.0",
-    "mql5_generator": "1.2",  # 1.2 : week-end, objectif journalier, filtre d'annonces ; 1.1 : InpRiskScale, verrou inter-robots, suspension/arrêt d'urgence
+    "mql5_generator": "1.3",  # 1.3 : garde compte persistante en équité (hors testeur), refus du réel revérifié avant chaque ordre ; 1.2 : week-end, objectif journalier, filtre d'annonces ; 1.1 : InpRiskScale, verrou inter-robots, suspension/arrêt d'urgence
     "parity": "1.0",
     "risk_controller": "1.1",  # 1.1 : objectif journalier, week-end, filtre d'annonces
-    "portfolio": "1.0",
+    "portfolio": "1.1",  # 1.1 : rapport hors échantillon avec les poids de recherche
 }
 
 

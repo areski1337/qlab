@@ -2,7 +2,7 @@
 
 ```
 ┌──────────────────────────── Electron (app/) ────────────────────────────┐
-│ renderer React (13 écrans FR)  ──IPC validé──▶  main (proxy + SSE)       │
+│ renderer React (15 écrans FR)  ──IPC validé──▶  main (proxy + SSE)       │
 │ contextIsolation, sandbox, CSP 'self', protocole app://, aucun Node     │
 └───────────────────────────────┬──────────────────────────────────────────┘
                                 │ HTTP 127.0.0.1:<port aléatoire>, en-tête X-QLab-Token

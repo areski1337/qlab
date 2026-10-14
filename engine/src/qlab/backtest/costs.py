@@ -13,6 +13,7 @@ DEFAULT_COST_PROFILE = {
     "fixed_spread_points": None,     # requis si le spread historique est nul/inconnu
     "commission_per_lot_side": 0.0,  # devise du compte
     "slippage_points": 0,
+    "spread_scale": 1.0,             # multiplicateur appliqué au spread final (scénarios de stress)
     "apply_swap": True,
     "provenance": {"spread": "assumed", "commission": "assumed", "slippage": "assumed", "swap": "symbol_spec"},
 }
@@ -27,7 +28,14 @@ def profile_sha(p: dict) -> str:
 
 
 def spread_series(bars, profile: dict) -> np.ndarray:
-    """Spread en points par barre selon le profil ; erreur si inconnu (jamais 0 par défaut)."""
+    """Spread en points par barre selon le profil, multiplié par `spread_scale` ; erreur si inconnu (jamais 0)."""
+    scale = float(profile.get("spread_scale", 1.0) or 1.0)
+    if scale <= 0:
+        raise CostError("spread_scale doit être > 0")
+    return _base_spread(bars, profile) * scale
+
+
+def _base_spread(bars, profile: dict) -> np.ndarray:
     s = bars.spread.astype(float)
     fixed = profile.get("fixed_spread_points")
     mode = profile["spread_mode"]

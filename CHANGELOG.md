@@ -2,6 +2,25 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des composants : `engine/src/qlab/core/versions.py`.
 
+## [0.6.0] — 2026-10-14
+Correctifs issus de la revue produit continue (cycle 1, `product-intelligence/audits/2026-10-14-cycle-001.md`).
+### Corrigé
+- Stress de coûts : le spread effectif est réellement multiplié par 1,5 / 2 (il relevait seulement un plancher, sans effet sur des spreads historiques supérieurs). `cost_model` 1.1 (`spread_scale`).
+- Frontières de segments datées par série (migration 0009) : un ré-import plus long ne fait plus glisser d'anciennes barres hors échantillon ou finales vers la recherche ; segment `forward` pour les barres nouvelles ; multiplicité du holdout et de l'OOS comptée par série. `validation_protocol` 1.1.
+- Décision hors échantillon corrigée de la multiplicité : test t unilatéral des R au seuil 1 − 0,95^(1/m).
+- Deflated Sharpe : essais = toutes les révisions de la série (campagnes, relances, versions), mesuré sur la fenêtre train comme les essais.
+- Démo : chaque montée de palier exige 20 trades nouveaux ; une observation n'autorise qu'une montée. R observé exact (stop initial de l'ordre) ; dérive des coûts détectée même avec une référence sans commission ; glissement d'exécution surveillé.
+- EA 1.3 : garde compte persistante en équité, commune aux EA QLab du compte, qui survit aux redémarrages ; refus du compte réel revérifié avant chaque ordre.
+- Portefeuille depuis une campagne : stratégies ≥ hors échantillon uniquement, performance rapportée aussi hors échantillon avec les mêmes poids.
+### Ajouté
+- Budget d'essais à la création d'une campagne (Sharpe requis pour passer le DSR) et entonnoir de validation avec cause de rejet dominante.
+- Écran Démo : état des gardes compte et levée manuelle.
+- Rapport de robustesse : tests ordonnés du moins au plus coûteux, arrêt au premier échec ; walk-forward marqués « in-sample ».
+### Sécurité
+- Mises à jour : manifeste signé Ed25519 exigé (clé publique figée dans l'application).
+- IPC : contrôle d'origine sur tous les canaux.
+- Tests : client HTTP `httpx2` (dépréciation Starlette).
+
 ## [Non publié]
 ### Corrigé
 - Campagne « bloquée à 0 % » : la progression n'avançait qu'en fin de génération (très longue avec de grandes populations). Les évaluations se font maintenant par lots : progression visible dans la génération, temps restant estimé, pause et arrêt pris en compte en quelques secondes (la génération interrompue est rejouée à la reprise, évaluations déjà faites réutilisées depuis le cache).

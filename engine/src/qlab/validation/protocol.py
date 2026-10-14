@@ -10,10 +10,19 @@ Segments (fractions configurables, ordre chronologique, sans chevauchement) :
                n'est plus présenté comme indépendant (biais de sélection).
 Les features n'utilisent que le passé : le calcul sur la série complète ne
 fuit pas vers les segments antérieurs (vérifié par AT-001).
+
+Frontières datées (`segments_for`) : au premier usage d'une série (dataset), les
+fractions sont converties en horodatages et figées. Toute version ultérieure
+(ré-import plus long) réutilise ces dates : une barre déjà oos/final ne revient
+jamais en train/validation, et les barres postérieures forment le segment
+« forward ». La multiplicité (holdout, oos) est comptée par série, toutes
+versions confondues.
 """
 from __future__ import annotations
 
 import json
+
+import numpy as np
 
 from ..backtest import engine
 from ..core.hashing import sha256_json
@@ -41,10 +50,46 @@ def segments(n: int, protocol: dict = DEFAULT_PROTOCOL) -> dict[str, tuple[int, 
     return out
 
 
-def walk_forward(n: int, protocol: dict = DEFAULT_PROTOCOL) -> list[dict]:
-    """Fenêtres glissantes ancrées couvrant train+validation (jamais oos/final)."""
-    seg = segments(n, protocol)
-    end = seg["validation"][1]
+def protocol_sha(protocol: dict) -> str:
+    return sha256_json({"name": protocol["name"], "fractions": protocol["fractions"]})
+
+
+def dataset_of(lab, version_id: str | None) -> str | None:
+    if lab is None or version_id is None:
+        return None
+    row = lab.con.execute("SELECT dataset_id FROM dataset_versions WHERE id=?", (version_id,)).fetchone()
+    return row[0] if row else None
+
+
+def segments_for(lab, bars, protocol: dict = DEFAULT_PROTOCOL) -> dict[str, tuple[int, int]]:
+    """Segments aux frontières datées de la série (figées au premier usage), plus `forward` (barres postérieures).
+    Sans base (calcul pur), retombe sur les fractions de la série fournie."""
+    ds = dataset_of(lab, getattr(bars, "version_id", None))
+    if ds is None:
+        return {**segments(len(bars), protocol), "forward": (len(bars), len(bars))}
+    psha = protocol_sha(protocol)
+    row = lab.con.execute("SELECT * FROM segment_boundaries WHERE dataset_id=? AND protocol_sha256=?",
+                          (ds, psha)).fetchone()
+    if row is None:
+        seg = segments(len(bars), protocol)
+        ends = {s: int(bars.ts[seg[s][1] - 1]) for s in SEGMENTS}
+        lab.con.execute("INSERT OR IGNORE INTO segment_boundaries VALUES (?,?,?,?,?,?,?,?)",
+                        (ds, psha, ends["train"], ends["validation"], ends["oos"], ends["final"], bars.version_id,
+                         utc_now_iso()))
+        audit(lab.con, "segments.fixed", ds, protocol=psha, version=bars.version_id, ends=ends)
+        row = lab.con.execute("SELECT * FROM segment_boundaries WHERE dataset_id=? AND protocol_sha256=?",
+                              (ds, psha)).fetchone()
+    cut = [int(np.searchsorted(bars.ts, row[c], side="right"))
+           for c in ("train_end_ts", "validation_end_ts", "oos_end_ts", "final_end_ts")]
+    out = {"train": (0, cut[0]), "validation": (cut[0], cut[1]), "oos": (cut[1], cut[2]), "final": (cut[2], cut[3]),
+           "forward": (cut[3], len(bars))}
+    return out
+
+
+def walk_forward(n: int, protocol: dict = DEFAULT_PROTOCOL, end: int | None = None) -> list[dict]:
+    """Fenêtres glissantes ancrées couvrant train+validation (jamais oos/final). `end` = fin de validation."""
+    if end is None:
+        end = segments(n, protocol)["validation"][1]
     k = protocol["walk_forward_folds"]
     step = end // (k + 1)
     return [{"fold": f, "fit": (0, step * (f + 1)), "test": (step * (f + 1), step * (f + 2) if f < k - 1 else end)}
@@ -97,7 +142,9 @@ def evaluate(lab, rev: dict, cache, costs: dict, risk, segment: str, protocol: d
     if segment == "final" and not allow_final:
         raise PermissionError("le segment final n'est accessible que par une évaluation finale explicite")
     if window is None:
-        window = segments(len(cache.bars), protocol)[segment]
+        window = segments_for(lab, cache.bars, protocol)[segment]
+    if window[1] - window[0] < 2:
+        raise ValueError(f"segment {segment} vide ou trop court pour cette version du dataset {list(window)}")
     key = cache_key(rev["semantic_hash"], cache, costs, risk, segment, window, protocol)
     hit = find(lab, key)
     if hit and (hit["trades_artifact"] or not store_trades):
@@ -112,8 +159,15 @@ def evaluate(lab, rev: dict, cache, costs: dict, risk, segment: str, protocol: d
                  store_trades) | {"result": res}
 
 
-def holdout_usage(lab, dataset_version_id: str, window) -> dict:
-    """Nombre de révisions distinctes déjà évaluées sur ce holdout final."""
-    n = lab.con.execute("SELECT COUNT(DISTINCT revision_id) FROM evaluations WHERE segment='final' AND "
-                        "dataset_version_id=? AND window_json=?", (dataset_version_id, json.dumps(list(window)))).fetchone()[0]
+def segment_usage(lab, dataset_version_id: str, segment: str) -> int:
+    """Révisions distinctes déjà évaluées sur ce segment de la série, toutes versions du dataset confondues."""
+    return lab.con.execute(
+        "SELECT COUNT(DISTINCT e.revision_id) FROM evaluations e JOIN dataset_versions v ON v.id=e.dataset_version_id "
+        "WHERE e.segment=? AND v.dataset_id=(SELECT dataset_id FROM dataset_versions WHERE id=?)",
+        (segment, dataset_version_id)).fetchone()[0]
+
+
+def holdout_usage(lab, dataset_version_id: str, window=None) -> dict:
+    """Nombre de révisions distinctes déjà évaluées sur le holdout final de la série (toutes versions)."""
+    n = segment_usage(lab, dataset_version_id, "final")
     return {"revisions_evaluated": n, "independent": n <= 1}

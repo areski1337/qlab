@@ -24,6 +24,9 @@ export function Portfolio() {
         <Tile l="Sharpe" v={fmt(rep.portfolio.sharpe, 2)} tone={signTone(rep.portfolio.sharpe)} s="journalier annualisé (√252)" />
         <Tile l="Drawdowns simultanés" v={`${fmt(rep.simultaneous_drawdown_ratio * 100, 1)} %`} s="jours où ≥ 2 stratégies < −2 %" tone={rep.simultaneous_drawdown_ratio > 0.2 ? "bad" : null} />
         <Tile l="Concentration" v={fmt(rep.concentration_hhi, 3)} s={`HHI · 1/n = ${fmt(1 / rep.strategies.length, 3)}`} />
+        {rep.oos && (rep.oos.available
+          ? <Tile l="Hors échantillon" v={`${fmt(rep.oos.portfolio.return_pct, 1)} %`} tone={signTone(rep.oos.portfolio.return_pct)} s={`DD ${fmt(rep.oos.portfolio.max_dd_pct, 1)} % · Sharpe ${fmt(rep.oos.portfolio.sharpe, 2)} · mêmes poids`} hint="Performance du même portefeuille sur la période hors échantillon : l'écart avec la recherche mesure l'optimisme in-sample." />
+          : <Tile l="Hors échantillon" v="—" s={rep.oos.reason} />)}
       </div>}
       <div className="grid">
         {rep && <>
@@ -107,8 +110,15 @@ export function Demo() {
           </div>
           {a.view}
         </Card>
+        <Card title="Garde compte des EA (persistante)">
+          <p className="muted">Chaque EA QLab tient, hors testeur, un état commun au compte : pic d'équité, arrêt sur drawdown max, perte du jour en équité (positions ouvertes comprises). Il survit aux redémarrages ; l'arrêt n'est levé que manuellement.</p>
+          <Table rows={data?.account_guards ?? null} empty="Aucune garde active (aucun EA QLab démarré sur ce terminal)." cols={[
+            { k: "account_masked", t: "Compte" }, { k: "peak_equity", t: "Pic d'équité", num: true }, { k: "day_start_equity", t: "Début de jour", num: true },
+            { k: "halted", t: "Arrêt", f: (r) => r.error ? r.error : r.halted ? <b style={{ color: "var(--down)" }}>ACTIF</b> : "non" },
+            { k: "act", t: "", f: (r) => r.halted ? <button className="btn danger" onClick={() => a.run(() => api.post(`/demo/guards/${r.login}/reset`, { on: false, reason: "levée manuelle de la garde" }), () => "Garde réinitialisée au niveau d'équité actuel.")}>Lever l'arrêt</button> : null }]} />
+        </Card>
         <Card title="Enregistrer un déploiement démo">
-          <p className="muted">Réservé aux stratégies « validée MT5 ». Palier de risque 25 % (InpRiskScale = 0,25), puis 50 % et 100 % après 20 trades sans alerte.</p>
+          <p className="muted">Réservé aux stratégies « validée MT5 ». Palier de risque 25 % (InpRiskScale = 0,25), puis 50 % et 100 % : chaque montée exige 20 trades <b>nouveaux</b> depuis le palier précédent, sans alerte.</p>
           <div className="row">
             <Field label="Révision validée MT5"><select value={rid} onChange={(e) => setRid(e.target.value)}>
               <option value="">{revs.data?.length ? "— choisir —" : "aucune révision validée MT5"}</option>{revs.data?.map((r) => <option key={r.id} value={r.id}>{r.id}</option>)}</select></Field>

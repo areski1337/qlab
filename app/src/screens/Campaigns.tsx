@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import { Badge, Btn, Card, Err, Field, fmt, PageHead, Seg, Table, TaskControls, Tile, useAction, useApi } from "../ui";
+import { Badge, Btn, Card, Err, Field, fmt, Json, PageHead, Seg, Table, TaskControls, Tile, useAction, useApi } from "../ui";
 import { Bars, Explain, Lines, Scatter } from "../charts";
 import { useNav } from "../main";
 
@@ -51,6 +51,7 @@ export function Campaigns() {
   const htfs = ds.data?.filter((d) => base && d.canonical_symbol === base.canonical_symbol && d.timeframe !== base.timeframe) ?? [];
   const needSpread = (base?.qc?.zero_spread_ratio ?? 0) > 0;
   const evals = f.tribes.length * f.population * f.generations_per_tribe + f.population * f.merge_generations;
+  const est = useApi<any>(f.dataset_version_id ? `/campaigns/estimate?dataset_version_id=${encodeURIComponent(f.dataset_version_id)}&n=${evals}` : null, [f.dataset_version_id, evals]);
 
   const pickDataset = (id: string) => {
     const d = ds.data?.find((x) => x.id === id);
@@ -112,6 +113,11 @@ export function Campaigns() {
       <PageHead title="Campagnes" sub="Recherche génétique sur entraînement + validation. Les segments hors échantillon et final restent scellés." />
       <div className="grid">
         <Card title="Nouvelle campagne" wide actions={<span className={evals > 50000 ? "real-off" : "muted"} style={{ fontFamily: "var(--font-num)" }}>≈ {fmt(evals, 0)} évaluations</span>}>
+          {est.data && <div className="alert">
+            <b>Budget d'essais.</b> Cette série compte déjà {fmt(est.data.previous_trials_on_series, 0)} stratégie(s) essayée(s) ; avec ≈ {fmt(est.data.planned_trials, 0)} de plus,
+            le Sharpe dégonflé exigera un Sharpe annualisé d'environ <b>{fmt(est.data.required_sharpe_annual, 2)}</b> sur {fmt(est.data.train_days, 0)} jours d'entraînement
+            (maximum attendu par pur hasard : {fmt(est.data.sr0_annual, 2)} ; dispersion {est.data.sd_source}). Moins d'essais ou un historique plus long abaissent ce seuil.
+          </div>}
           {evals > 50000 && <div className="alert warn">Campagne très lourde (≈ {fmt(evals, 0)} backtests) : plusieurs heures à plusieurs jours selon la taille du dataset. Préférer « Standard » puis relancer depuis les meilleures stratégies.</div>}
           <h3>1 · Marché</h3>
           <div className="row">
@@ -301,9 +307,26 @@ export function CampaignLab() {
             <Explain>Part des enfants produits par un opérateur qui sont <b>faisables et sur le premier front de Pareto</b> de leur génération (a priori des campagnes passées inclus). La campagne tire plus souvent les opérateurs efficaces (mémoire des opérateurs).</Explain>
           </Card>
           {d.task.result?.front && <Card title="Front de Pareto final (fusion)" wide><FrontTable front={d.task.result.front} /></Card>}
+          {d.task.state === "completed" && <Funnel cid={d.id} />}
         </div>
       </>}
     </div>
+  );
+}
+
+function Funnel({ cid }: { cid: string }) {
+  const r = useApi<any>(`/campaigns/${cid}/funnel`, [cid]);
+  const x = r.data;
+  if (!x) return null;
+  const steps: [string, string][] = [["unverified", "Candidats"], ["screened", "Filtrés"], ["historically_tested", "Historique"],
+    ["robustness_tested", "Robustesse"], ["oos_evaluated", "Hors échantillon"], ["mt5_validated", "Validés MT5"]];
+  return (
+    <Card title="Entonnoir de validation" wide>
+      <Bars unit="stratégies" items={steps.map(([k, l]) => ({ label: l, value: x.reached?.[k] ?? 0 }))} />
+      {x.dominant_cause && <div className="alert warn">Cause de rejet dominante : <b>{x.dominant_cause}</b>{x.advice ? ` — ${x.advice}.` : ""}</div>}
+      <Json v={{ rejets: x.rejection_reasons, criteres_robustesse_en_echec: x.failed_robustness_checks }} />
+      <Explain>Nombre de stratégies de la campagne ayant atteint chaque étape. Les stratégies non soumises à la validation restent au premier palier.</Explain>
+    </Card>
   );
 }
 

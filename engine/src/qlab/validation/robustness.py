@@ -6,15 +6,23 @@ complémentaires et leurs hypothèses sont rappelées dans le rapport.
 - walk_forward : stabilité sur des fenêtres successives, paramètres FIGÉS
   (pas de ré-optimisation par fenêtre : c'est un test de stabilité, pas un
   walk-forward d'optimisation).
+- walk_forward_reopt : paramètres ré-optimisés par pli, structure figée.
+  Les deux walk-forward s'exécutent DANS la fenêtre train+validation où la
+  structure a été découverte et sélectionnée : ce sont des tests de stabilité
+  in-sample (rapportés `in_sample: True`), jamais une preuve hors échantillon.
 - sensitivity : voisins paramétriques (±1 pas entier, ×0,8/×1,2 réel).
-- cost_stress : spread ×1,5 et ×2, glissement et commission ajoutés.
+- cost_stress : spread effectif (barres, plancher ou fixe) multiplié par 1,5
+  et 2, glissement (+25 % du spread médian) et commission ajoutés.
 - monte_carlo : bootstrap des PnL de trades (i.i.d. supposé : ignore
   l'autocorrélation) et permutations d'ordre (drawdown seulement).
 - random_baseline : entrées aléatoires de même fréquence et même part long,
   mêmes sorties/risque ; p-valeur empirique de l'expectancy.
-- deflated_sharpe : Bailey & López de Prado (2014), N essais = nombre de
-  candidats évalués dans la campagne ; suppose des essais indépendants
-  (approximation optimiste quand les candidats sont corrélés).
+- deflated_sharpe : Bailey & López de Prado (2014), sur la fenêtre train ;
+  N essais = toutes les révisions évaluées en train sur la même série
+  (toutes campagnes, relances et versions du dataset confondues) ; suppose des
+  essais indépendants (N effectif surestimé quand les candidats sont corrélés).
+Ordre d'exécution : du moins coûteux au plus coûteux ; dès qu'un critère
+éliminatoire échoue, les tests coûteux restants sont marqués `skipped`.
 """
 from __future__ import annotations
 
@@ -53,16 +61,21 @@ def _summ(m):
                                   "sharpe", "max_dd_pct", "win_rate")}
 
 
-def walk_forward(g, cache, costs, risk, protocol) -> dict:
+def _wf_end(cache, protocol, seg):
+    return (seg or proto.segments(len(cache.bars), protocol))["validation"][1]
+
+
+def walk_forward(g, cache, costs, risk, protocol, seg: dict | None = None) -> dict:
     folds = []
-    for f in proto.walk_forward(len(cache.bars), protocol):
+    for f in proto.walk_forward(len(cache.bars), protocol, _wf_end(cache, protocol, seg)):
         _, m = _run(g, cache, costs, risk, f["test"])
         folds.append({"fold": f["fold"], "window": f["test"], **_summ(m)})
     pos = [f for f in folds if (f["expectancy"] or 0) > 0]
-    return {"folds": folds, "positive_ratio": len(pos) / len(folds) if folds else None}
+    return {"folds": folds, "positive_ratio": len(pos) / len(folds) if folds else None, "in_sample": True}
 
 
-def walk_forward_reopt(g, cache, costs, risk, protocol, n_trials: int = 24, seed: int = 0) -> dict:
+def walk_forward_reopt(g, cache, costs, risk, protocol, n_trials: int = 24, seed: int = 0,
+                       seg: dict | None = None) -> dict:
     """Walk-forward d'optimisation : structure figée ; paramètres/constantes/sorties ré-optimisés sur la fenêtre
     d'apprentissage (ancrée) de chaque pli, jeu retenu = meilleur Sharpe avec >= 10 trades, évalué sur le pli suivant.
     WFE = Sharpe moyen hors pli / Sharpe moyen d'apprentissage des jeux retenus (None si non calculable)."""
@@ -71,7 +84,7 @@ def walk_forward_reopt(g, cache, costs, risk, protocol, n_trials: int = 24, seed
     rng = random.Random(seed)
     htfs = tuple(sorted(cache.context))
     folds = []
-    for f in proto.walk_forward(len(cache.bars), protocol):
+    for f in proto.walk_forward(len(cache.bars), protocol, _wf_end(cache, protocol, seg)):
         cands = [g]
         tries = 0
         while len(cands) < n_trials and tries < n_trials * 4:
@@ -93,7 +106,9 @@ def walk_forward_reopt(g, cache, costs, risk, protocol, n_trials: int = 24, seed
     ts = [x["sharpe"] for x in folds if x["sharpe"] is not None]
     wfe = (float(np.mean(ts)) / float(np.mean(fs))) if fs and ts and np.mean(fs) > 0 else None
     return {"folds": folds, "positive_ratio": len(pos) / len(folds) if folds else None, "wfe": wfe,
-            "oos_net_total": float(sum(x["net_profit"] or 0 for x in folds)), "trials_per_fold": n_trials, "seed": seed}
+            "oos_net_total": float(sum(x["net_profit"] or 0 for x in folds)), "trials_per_fold": n_trials, "seed": seed,
+            "in_sample": True,
+            "note": "plis dans train+validation, où la structure a été découverte : stabilité in-sample, pas une preuve OOS"}
 
 
 def neighbors(g: dict) -> list[tuple[str, dict]]:
@@ -142,19 +157,22 @@ def sensitivity(g, cache, costs, risk, window) -> dict:
 
 
 def cost_stress(g, cache, costs, risk, window) -> dict:
-    base = costs.get("fixed_spread_points") or 0
+    """Le spread effectif (barres, plancher ou fixe selon le profil) est MULTIPLIÉ : chaque scénario coûte plus que la base."""
+    from ..backtest.costs import spread_series
     pt = float(cache.bars.spec["point"])
+    scale = float(costs.get("spread_scale", 1.0) or 1.0)
+    med = float(np.median(spread_series(cache.bars, costs)[window[0]:window[1]]))
     scen = {
-        "spread_x1.5": {**costs, "spread_mode": "max", "fixed_spread_points": max(base, 1) * 1.5},
-        "spread_x2": {**costs, "spread_mode": "max", "fixed_spread_points": max(base, 1) * 2},
-        "slippage+": {**costs, "slippage_points": costs.get("slippage_points", 0) + max(1, int(base * 0.25))},
+        "spread_x1.5": {**costs, "spread_scale": scale * 1.5},
+        "spread_x2": {**costs, "spread_scale": scale * 2},
+        "slippage+": {**costs, "slippage_points": costs.get("slippage_points", 0) + max(1, int(round(med * 0.25)))},
         "commission+": {**costs, "commission_per_lot_side": costs.get("commission_per_lot_side", 0) + 3.5},
     }
     out = {}
     for k, c in scen.items():
         _, m = _run(g, cache, c, risk, window)
         out[k] = _summ(m)
-    out["_note"] = f"spread de base {base} points (point = {pt}) ; mode max(barres, fixe)"
+    out["_note"] = f"spread effectif médian {med:g} points (point = {pt}) multiplié ×1,5 / ×2"
     return out
 
 
@@ -249,6 +267,21 @@ def daily_moments(res: dict, window_ts) -> tuple[int, float, float]:
     return len(r), float((z ** 3).mean()), float((z ** 4).mean())
 
 
+def trial_sharpes(lab, version_id: str | None) -> list[float]:
+    """Sharpe en train de toutes les révisions évaluées sur la série (toutes campagnes et versions du dataset),
+    une valeur par révision (évaluation la plus récente)."""
+    if lab is None or version_id is None:
+        return []
+    import json
+    by_rev: dict[str, float | None] = {}
+    for rid, mj in lab.con.execute(
+            "SELECT e.revision_id, e.metrics_json FROM evaluations e JOIN dataset_versions v ON v.id=e.dataset_version_id "
+            "WHERE e.segment='train' AND v.dataset_id=(SELECT dataset_id FROM dataset_versions WHERE id=?) "
+            "ORDER BY e.created_at", (version_id,)):
+        by_rev[rid] = json.loads(mj).get("sharpe")
+    return list(by_rev.values())
+
+
 def transfer(g, caches: dict, costs: dict, risk, protocol) -> dict:
     """Mêmes règles sur d'autres instruments (fenêtre train+validation de chacun). Informatif, non bloquant :
     l'absence de transfert n'invalide pas une stratégie spécialisée, mais elle est rapportée."""
@@ -266,51 +299,69 @@ def transfer(g, caches: dict, costs: dict, risk, protocol) -> dict:
 def run_suite(lab, rev: dict, cache, costs: dict, risk, protocol: dict, campaign_id: str | None = None,
               criteria: dict = DEFAULT_CRITERIA, seed: int = 0, transfer_caches: dict | None = None) -> dict:
     g = rev["content"]
-    seg = proto.segments(len(cache.bars), protocol)
+    seg = proto.segments_for(lab, cache.bars, protocol)
     window = (seg["train"][0], seg["validation"][1])
     res, m = _run(g, cache, costs, risk, window)
-    wts = (int(cache.bars.ts[window[0]]), int(cache.bars.ts[window[1] - 1]))
-    trials = []
-    if campaign_id:
-        import json
-        # essais = révisions de la campagne évaluées sur train, y compris via le cache partagé entre campagnes
-        trials = [json.loads(r[0]).get("sharpe") for r in lab.con.execute(
-            "SELECT MAX(e.metrics_json) FROM evaluations e JOIN genome_revisions g ON g.id=e.revision_id "
-            "WHERE g.campaign_id=? AND e.segment='train' GROUP BY g.id", (campaign_id,))]
-    t_obs, skew, kurt = daily_moments(res, wts)
-    rep = {
-        "window": window, "base": _summ(m),
-        "walk_forward": walk_forward(g, cache, costs, risk, protocol),
-        "walk_forward_reopt": walk_forward_reopt(g, cache, costs, risk, protocol, seed=seed),
-        "sensitivity": sensitivity(g, cache, costs, risk, window),
-        "cost_stress": cost_stress(g, cache, costs, risk, window),
-        "monte_carlo": monte_carlo(res["trades"], res["initial_equity"], seed=seed),
-        "random_baseline": random_baseline(g, cache, costs, risk, window, res["trades"], seed=seed),
-        "deflated_sharpe": deflated_sharpe(m["sharpe"], t_obs, skew, kurt, trials or [m["sharpe"]]),
-        "criteria": criteria,
-        "transfer": transfer(g, transfer_caches or {}, costs, risk, protocol),
-    }
+    # DSR sur la fenêtre train : celle sur laquelle tous les essais de la série sont mesurés
+    tw = seg["train"]
+    res_t, m_t = _run(g, cache, costs, risk, tw)
+    t_obs, skew, kurt = daily_moments(res_t, (int(cache.bars.ts[tw[0]]), int(cache.bars.ts[tw[1] - 1])))
+    trials = trial_sharpes(lab, cache.bars.version_id) or ([m_t["sharpe"]] if m_t["sharpe"] is not None else [])
+    rep = {"window": window, "segments": {k: list(v) for k, v in seg.items()}, "base": _summ(m), "criteria": criteria}
+    skipped = {"skipped": True, "reason": "critère éliminatoire déjà en échec : test coûteux non exécuté"}
+    # du moins coûteux au plus coûteux ; arrêt des tests restants au premier échec certain
+    steps = [
+        ("cost_stress", lambda: cost_stress(g, cache, costs, risk, window)),
+        ("monte_carlo", lambda: monte_carlo(res["trades"], res["initial_equity"], seed=seed)),
+        ("deflated_sharpe", lambda: {**deflated_sharpe(m_t["sharpe"], t_obs, skew, kurt, trials), "window": "train",
+                                     "trials_scope": "série : toutes campagnes, relances et versions du dataset"}),
+        ("walk_forward", lambda: walk_forward(g, cache, costs, risk, protocol, seg)),
+        ("sensitivity", lambda: sensitivity(g, cache, costs, risk, window)),
+        ("random_baseline", lambda: random_baseline(g, cache, costs, risk, window, res["trades"], seed=seed)),
+        ("walk_forward_reopt", lambda: walk_forward_reopt(g, cache, costs, risk, protocol, seed=seed, seg=seg)),
+    ]
+    failed = (rep["base"]["n_trades"] or 0) < criteria["min_trades"]
+    for name, fn in steps:
+        rep[name] = dict(skipped) if failed else fn()
+        if not failed:
+            failed = any(c["pass"] is False for c in checks(rep, criteria, partial=True).values())
+    rep["transfer"] = transfer(g, transfer_caches or {}, costs, risk, protocol)
     rep["checks"] = checks(rep, criteria)
-    rep["passed"] = all(c["pass"] for c in rep["checks"].values() if c["pass"] is not None) and \
-        all(c["pass"] is not None for c in rep["checks"].values())
+    rep["passed"] = all(c["pass"] is True for c in rep["checks"].values())
     return rep
 
 
-def checks(rep: dict, c: dict) -> dict:
+def checks(rep: dict, c: dict, partial: bool = False) -> dict:
+    """Verdict par critère ; un test non exécuté (`skipped`) vaut None. `partial` : seulement les tests déjà exécutés."""
     def chk(value, ok):
         return {"value": value, "pass": None if value is None else bool(ok(value))}
-    mc = rep["monte_carlo"]
-    rb = rep["random_baseline"]
-    ds = rep["deflated_sharpe"]
-    return {
-        "min_trades": chk(rep["base"]["n_trades"], lambda v: v >= c["min_trades"]),
-        "walk_forward": chk(rep["walk_forward"]["positive_ratio"], lambda v: v >= c["wf_positive_folds_ratio"]),
-        "walk_forward_reopt": chk(rep["walk_forward_reopt"]["positive_ratio"],
-                                  lambda v: v >= c["wfo_positive_folds_ratio"] and rep["walk_forward_reopt"]["oos_net_total"] > 0),
-        "sensitivity": chk(rep["sensitivity"]["positive_ratio"], lambda v: v >= c["sensitivity_positive_ratio"]),
-        "cost_stress_x1.5": chk(rep["cost_stress"]["spread_x1.5"]["expectancy"], lambda v: v > 0),
-        "mc_p95_max_dd": chk(mc["bootstrap_max_dd_pct"]["p95"] if mc.get("available") else None,
-                             lambda v: v <= c["mc_p95_max_dd_pct"]),
-        "random_baseline": chk(rb["p_value"] if rb.get("available") else None, lambda v: v <= c["random_baseline_p_max"]),
-        "deflated_sharpe": chk(ds["dsr"] if ds.get("available") else None, lambda v: v >= c["dsr_min"]),
-    }
+
+    def has(k):
+        return not partial or (k in rep and not rep[k].get("skipped"))
+
+    out = {"min_trades": chk(rep["base"]["n_trades"], lambda v: v >= c["min_trades"])}
+    if has("walk_forward"):
+        out["walk_forward"] = chk(rep.get("walk_forward", {}).get("positive_ratio"),
+                                  lambda v: v >= c["wf_positive_folds_ratio"])
+    if has("walk_forward_reopt"):
+        wo = rep.get("walk_forward_reopt", {})
+        out["walk_forward_reopt"] = chk(wo.get("positive_ratio"),
+                                        lambda v: v >= c["wfo_positive_folds_ratio"] and wo["oos_net_total"] > 0)
+    if has("sensitivity"):
+        out["sensitivity"] = chk(rep.get("sensitivity", {}).get("positive_ratio"),
+                                 lambda v: v >= c["sensitivity_positive_ratio"])
+    if has("cost_stress"):
+        out["cost_stress_x1.5"] = chk((rep.get("cost_stress", {}).get("spread_x1.5") or {}).get("expectancy"),
+                                      lambda v: v > 0)
+    if has("monte_carlo"):
+        mc = rep.get("monte_carlo", {})
+        out["mc_p95_max_dd"] = chk(mc["bootstrap_max_dd_pct"]["p95"] if mc.get("available") else None,
+                                   lambda v: v <= c["mc_p95_max_dd_pct"])
+    if has("random_baseline"):
+        rb = rep.get("random_baseline", {})
+        out["random_baseline"] = chk(rb["p_value"] if rb.get("available") else None,
+                                     lambda v: v <= c["random_baseline_p_max"])
+    if has("deflated_sharpe"):
+        ds = rep.get("deflated_sharpe", {})
+        out["deflated_sharpe"] = chk(ds["dsr"] if ds.get("available") else None, lambda v: v >= c["dsr_min"])
+    return out

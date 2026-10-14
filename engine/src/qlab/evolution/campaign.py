@@ -165,7 +165,7 @@ class Campaign:
         self.cache = FeatureCache(self.bars, self.ctx)
         from ..calendar.store import windows_for
         self.cache.news = windows_for(lab, self.bars.spec, self.limits)
-        seg = proto.segments(len(self.bars), config["protocol"])
+        seg = proto.segments_for(lab, self.bars, config["protocol"])
         self.windows = {"train": seg["train"], "validation": seg["validation"]}
         self.symbol, self.tf = self.bars.symbol, self.bars.timeframe
         self.htfs = tuple(sorted(self.ctx))

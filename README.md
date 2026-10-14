@@ -23,7 +23,7 @@ Détails : [docs/operations/installation.md](docs/operations/installation.md).
 - Expériences contrôlées sur les méthodes de recherche (section 18), promotion manuelle vers un canal expérimental.
 - Passeport de stratégie (observations / hypothèses / interprétations / non vérifié), export ZIP avec manifeste d'empreintes.
 - Portefeuille (allocation bornée, corrélations, risque marginal, exposition), démo en lecture seule (dégradation, suspension, arrêt d'urgence, paliers de risque 25/50/100 %).
-- Interface Electron/React en français, 13 écrans connectés à l'API locale.
+- Interface Electron/React en français, 15 écrans connectés à l'API locale ; mises à jour signées (Ed25519) depuis les releases GitHub.
 
 État complet, partiel et absent : [docs/inventory.md](docs/inventory.md). Résultats de tests : [docs/testing/results.md](docs/testing/results.md).
 
@@ -43,7 +43,7 @@ $env:QLAB_MT5_TESTS="1"; uv run pytest -q        # + import MT5 et compilation M
 ```
 
 ## Limites principales
-Moteur sur barres (pas de ticks) avec convention conservatrice ; calendrier économique indisponible (filtre d'annonces inactif) ; déploiement démo manuel ; régimes non exportables en MQL5 v1 ; Strategy Tester en ligne de commande seulement terminal fermé. Voir [docs/scientific-validation/protocol.md](docs/scientific-validation/protocol.md).
+Moteur sur barres (pas de ticks) avec convention conservatrice (résolution M1 si disponible) ; filtre d'annonces dépendant de la couverture du calendrier FXStreet ; déploiement démo manuel ; Strategy Tester en ligne de commande seulement terminal fermé ; walk-forward exécutés dans la fenêtre de recherche (stabilité in-sample). Voir [docs/scientific-validation/protocol.md](docs/scientific-validation/protocol.md).
 
 ## Licences
 Dépendances libres : Python (PSF), numpy/pandas (BSD), pyarrow (Apache-2.0), FastAPI/Starlette/uvicorn (MIT/BSD), jsonschema (MIT), MetaTrader5 (paquet MetaQuotes, gratuit), Electron/React/Vite/TypeScript (MIT/Apache-2.0). Aucune télémétrie.

@@ -63,7 +63,7 @@ def backtest(lab, task):
     seg = p.get("segment", "research")
     window = None
     if seg == "research":
-        s = proto.segments(len(cache.bars))
+        s = proto.segments_for(lab, cache.bars)
         window = (s["train"][0], s["validation"][1])
     ev = proto.evaluate(lab, rev, cache, costs, risk, seg, window=window, store_trades=True)
     return {"evaluation_id": ev["id"], "metrics": ev["metrics"], "trades_artifact": ev["trades_artifact"]}
@@ -87,7 +87,7 @@ def final_test(lab, task):
     cache = cache_for(lab, p["dataset_version_id"], p.get("context"))
     _, risk = _risk(lab)
     ev = proto.evaluate(lab, rev, cache, p.get("cost_profile") or DEFAULT_COST_PROFILE, risk, "final", allow_final=True)
-    w = proto.segments(len(cache.bars))["final"]
+    w = proto.segments_for(lab, cache.bars)["final"]
     return {"evaluation_id": ev["id"], "metrics": ev["metrics"], "holdout": proto.holdout_usage(lab, cache.bars.version_id, w)}
 
 

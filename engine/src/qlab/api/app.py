@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -477,6 +477,24 @@ def campaigns(lab=Depends(L)):
     return out
 
 
+@app.get(f"{API}/campaigns/estimate")
+def campaign_estimate(dataset_version_id: str, n: int = Query(ge=0, le=10_000_000), lab=Depends(L)):
+    """Budget d'essais : N total sur la série, Sharpe minimal requis pour passer le DSR (avant lancement)."""
+    from ..validation import budget
+    try:
+        return budget.estimate(lab, dataset_version_id, n)
+    except KeyError:
+        raise HTTPException(404, "version de dataset inconnue")
+
+
+@app.get(f"{API}/campaigns/{{cid}}/funnel")
+def campaign_funnel(cid: str, lab=Depends(L)):
+    from ..validation import budget
+    if not lab.con.execute("SELECT 1 FROM campaigns WHERE id=?", (cid,)).fetchone():
+        raise HTTPException(404, "campagne inconnue")
+    return budget.funnel(lab, cid)
+
+
 @app.get(f"{API}/campaigns/{{cid}}")
 def campaign_detail(cid: str, lab=Depends(L)):
     from ..tasks import checkpoints
@@ -541,14 +559,15 @@ class PortfolioFromCampaign(BaseModel):
 
 @app.post(f"{API}/portfolios/from-campaign")
 def portfolio_from_campaign(body: PortfolioFromCampaign, lab=Depends(L)):
-    """Portefeuille des révisions de la campagne au statut >= historically_tested et non rejetées."""
+    """Portefeuille des révisions de la campagne validées hors échantillon (statut >= oos_evaluated, non rejetées) :
+    poids sur la recherche, performance rapportée aussi hors échantillon."""
     from ..portfolio import service
-    ok = ("historically_tested", "robustness_tested", "oos_evaluated", "reference_matched", "mt5_validated", "demo_observed")
+    ok = ("oos_evaluated", "reference_matched", "mt5_validated", "demo_observed")
     ids = [r[0] for r in lab.con.execute(
         f"SELECT id FROM genome_revisions WHERE campaign_id=? AND status IN ({','.join('?' * len(ok))})",
         (body.campaign_id, *ok))]
     if len(ids) < 2:
-        raise HTTPException(409, f"{len(ids)} stratégie(s) éligible(s) (statut >= historically_tested, non rejetée) : "
+        raise HTTPException(409, f"{len(ids)} stratégie(s) éligible(s) (statut >= oos_evaluated, non rejetée) : "
                                  "au moins deux requises")
     try:
         return service.build(lab, f"Portefeuille {body.campaign_id}", ids, body.method, "research", body.w_min, body.w_max)
@@ -581,11 +600,13 @@ def demo_list(lab=Depends(L)):
         last = lab.con.execute("SELECT observed_at, report_json FROM demo_observations WHERE deployment_id=? "
                                "ORDER BY observed_at DESC LIMIT 1", (d["id"],)).fetchone()
         d["last_observation"] = {"at": last[0], **json.loads(last[1])} if last else None
+    from ..demo.monitor import guard_states
     try:
         emergency = flag_path(lab).exists()
+        guards = guard_states(lab)
     except FileNotFoundError:
-        emergency = None
-    return {"deployments": out, "emergency_stop": emergency,
+        emergency, guards = None, []
+    return {"deployments": out, "emergency_stop": emergency, "account_guards": guards,
             "news_filter": "actif si activé dans les limites et calendrier FXStreet couvrant la période ; sinon entrées refusées",
             "weekend_close": "configurable (limites de risque)"}
 
@@ -613,6 +634,17 @@ def emergency(body: Flag, lab=Depends(L)):
     from ..demo import monitor
     try:
         return monitor.set_flag(lab, None, body.on, body.reason)
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+
+
+@app.post(f"{API}/demo/guards/{{login}}/reset")
+def demo_guard_reset(login: str, body: Flag | None = None, lab=Depends(L)):
+    from ..demo import monitor
+    try:
+        return monitor.reset_guard(lab, login, body.reason if body else "levée manuelle")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     except FileNotFoundError as e:
         raise HTTPException(503, str(e))
 
