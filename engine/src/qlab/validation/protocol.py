@@ -61,15 +61,18 @@ def dataset_of(lab, version_id: str | None) -> str | None:
     return row[0] if row else None
 
 
-def segments_for(lab, bars, protocol: dict = DEFAULT_PROTOCOL) -> dict[str, tuple[int, int]]:
+def segments_for(lab, bars, protocol: dict = DEFAULT_PROTOCOL, freeze: bool = True) -> dict[str, tuple[int, int]]:
     """Segments aux frontières datées de la série (figées au premier usage), plus `forward` (barres postérieures).
-    Sans base (calcul pur), retombe sur les fractions de la série fournie."""
+    Sans base (calcul pur), retombe sur les fractions de la série fournie. `freeze=False` (estimation, rapport
+    informatif) : utilise les frontières figées si elles existent, sans jamais les figer."""
     ds = dataset_of(lab, getattr(bars, "version_id", None))
     if ds is None:
         return {**segments(len(bars), protocol), "forward": (len(bars), len(bars))}
     psha = protocol_sha(protocol)
     row = lab.con.execute("SELECT * FROM segment_boundaries WHERE dataset_id=? AND protocol_sha256=?",
                           (ds, psha)).fetchone()
+    if row is None and not freeze:
+        return {**segments(len(bars), protocol), "forward": (len(bars), len(bars))}
     if row is None:
         seg = segments(len(bars), protocol)
         ends = {s: int(bars.ts[seg[s][1] - 1]) for s in SEGMENTS}

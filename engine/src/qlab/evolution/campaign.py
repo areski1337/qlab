@@ -59,6 +59,9 @@ DEFAULT_CONFIG = {
 }
 
 
+SEED_STATUSES = ("unverified", "screened", "historically_tested", "robustness_tested")
+
+
 class Stopped(Exception):
     """Pause ou annulation demandée pendant une génération : la génération en cours est abandonnée
     (reprise depuis le dernier checkpoint ; les évaluations déjà faites restent en cache)."""
@@ -170,6 +173,13 @@ class Campaign:
         self.symbol, self.tf = self.bars.symbol, self.bars.timeframe
         self.htfs = tuple(sorted(self.ctx))
 
+    def stop_state(self) -> str | None:
+        """« paused »/« cancelled » si cette tâche ou sa tâche parente (expérience de méthode) est arrêtée."""
+        for tid in (self.task_id, self.cfg.get("parent_task_id")):
+            if tid and (s := queue.get(self.lab.con, tid)["state"]) in ("paused", "cancelled"):
+                return s
+        return None
+
     # -- persistance d'un candidat et de son évaluation --
     def revision(self, content: dict, parents=None) -> dict:
         h = model.semantic_hash(content)
@@ -194,7 +204,7 @@ class Campaign:
         # par lots : pause/annulation prises en compte en quelques secondes, progression visible dans la génération
         step = max(8, 4 * max(1, int(self.cfg["workers"])))
         for a in range(0, len(todo), step):
-            if queue.get(self.lab.con, self.task_id)["state"] in ("paused", "cancelled"):
+            if self.stop_state():
                 raise Stopped()
             part = todo[a:a + step]
             results = list(pool.map(_eval, [revs[i]["content"] for i in part], [w] * len(part))) if pool else \
@@ -269,8 +279,8 @@ class Campaign:
             self.cfg["cost_profile"], self.limits, self.cache.news)) if workers > 0 else None
         try:
             while True:
-                state = queue.get(lab.con, self.task_id)["state"]
-                if state in ("paused", "cancelled"):
+                state = self.stop_state()
+                if state:
                     return {"stopped": state, "gen": st["gen"]}
                 if st["phase"] == "tribes" and st["gen"] >= self.cfg["generations_per_tribe"]:
                     st = self.start_merge(st, pool)
@@ -282,7 +292,7 @@ class Campaign:
                     try:
                         self.generation(st, t, rng, pool)
                     except Stopped:
-                        return {"stopped": queue.get(lab.con, self.task_id)["state"], "gen": st["gen"]}
+                        return {"stopped": self.stop_state(), "gen": st["gen"]}
                 st["gen"] += 1
                 st["rng"] = _rng_dump(rng)
                 checkpoints.save(lab.con, lab.store, self.task_id, st)
@@ -504,8 +514,13 @@ def create(lab, config: dict) -> tuple[str, str]:
     if unknown:
         raise ValueError(f"bases de stratégie inconnues : {unknown}")
     for rid in cfg["seed_revision_ids"]:
-        if not lab.con.execute("SELECT 1 FROM genome_revisions WHERE id=?", (rid,)).fetchone():
+        row = lab.con.execute("SELECT status FROM genome_revisions WHERE id=?", (rid,)).fetchone()
+        if not row:
             raise ValueError(f"stratégie de départ inconnue : {rid}")
+        # une graine choisie après le test OOS ferait de ce test une étape de sélection (descendants retestés dessus)
+        if row[0] not in SEED_STATUSES:
+            raise ValueError(f"stratégie de départ {rid} au statut « {row[0]} » : seules les révisions qui n'ont pas "
+                             f"vu le segment hors échantillon sont admises ({', '.join(SEED_STATUSES)})")
     if cfg["cost_profile"].get("fixed_spread_points") is None:
         bars = load_bars(lab, cfg["dataset_version_id"])
         if (bars.spread <= 0).any():

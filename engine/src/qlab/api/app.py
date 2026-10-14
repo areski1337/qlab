@@ -544,6 +544,11 @@ def create_portfolio(body: PortfolioIn, lab=Depends(L)):
     from ..portfolio import service
     if body.segment == "final":
         raise HTTPException(403, "le holdout final n'est pas utilisable pour construire un portefeuille")
+    ok = ("oos_evaluated", "reference_matched", "mt5_validated", "demo_observed")
+    bad = [r for r in body.revision_ids
+           if (lab.con.execute("SELECT status FROM genome_revisions WHERE id=?", (r,)).fetchone() or [None])[0] not in ok]
+    if bad:
+        raise HTTPException(409, f"stratégies non validées hors échantillon (statut >= oos_evaluated requis) : {bad}")
     try:
         return service.build(lab, body.name, body.revision_ids, body.method, body.segment, body.w_min, body.w_max)
     except ValueError as e:

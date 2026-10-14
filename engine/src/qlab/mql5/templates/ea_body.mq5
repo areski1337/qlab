@@ -171,30 +171,46 @@ string QL_RiskCheck(const long day, const double lots, const double spread_pts)
 }
 
 // ---- garde compte (hors Strategy Tester) : persistante, en ÉQUITÉ, commune à tous les EA QLab du compte ----
-// Fichier commun QLab\guard_<login>.csv : pic;arrêt;jour;équité de début de jour. Survit aux redémarrages ;
-// l'arrêt sur drawdown n'est levé qu'en supprimant ce fichier. Non reproduite par le moteur de référence
-// (ADR-015) : désactivée dans le testeur, donc sans effet sur la parité.
+// Fichier commun QLab\guard_<login>.csv : pic;arrêt;jour;équité de début de jour. Survit aux redémarrages.
+// L'arrêt sur drawdown est AUSSI un fichier séparé guard_<login>.halt que l'EA crée et ne supprime jamais :
+// une écriture concurrente du .csv ne peut pas le lever ; seule la levée manuelle (suppression) le fait.
+// Non reproduite par le moteur de référence (ADR-015) : désactivée dans le testeur, donc sans effet sur la parité.
 bool QL_GuardActive() { return !(bool)MQLInfoInteger(MQL_TESTER) && !(bool)MQLInfoInteger(MQL_OPTIMIZATION); }
 string QL_GuardFile() { return "QLab\\guard_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".csv"; }
+string QL_GuardHaltFile() { return "QLab\\guard_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".halt"; }
 
-void QL_GuardRead(double &peak, bool &halted, long &day, double &day_start)
+// false = fichier présent mais illisible (ouvert ailleurs, tronqué) : ne jamais le traiter comme « aucun état ».
+bool QL_GuardRead(double &peak, bool &halted, long &day, double &day_start)
 {
-   peak = 0.0; halted = false; day = -1; day_start = 0.0;
+   peak = 0.0; day = -1; day_start = 0.0;
+   halted = FileIsExist(QL_GuardHaltFile(), FILE_COMMON);
+   if(!FileIsExist(QL_GuardFile(), FILE_COMMON)) return true;
    int h = FileOpen(QL_GuardFile(), FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE);
-   if(h == INVALID_HANDLE) return;
+   if(h == INVALID_HANDLE) return false;
    string line = FileReadString(h);
    FileClose(h);
    string f[];
-   if(StringSplit(line, ';', f) < 4) return;
-   peak = StringToDouble(f[0]); halted = (f[1] == "1"); day = StringToInteger(f[2]); day_start = StringToDouble(f[3]);
+   if(StringSplit(line, ';', f) < 4) return false;
+   peak = StringToDouble(f[0]); halted = halted || (f[1] == "1"); day = StringToInteger(f[2]); day_start = StringToDouble(f[3]);
+   return peak > 0 && day_start > 0;
 }
 
+// Écriture atomique : fichier temporaire propre à ce graphique, puis remplacement par FileMove.
+// shortcut: deux EA peuvent encore écraser le pic l'un de l'autre (dernier écrivain gagnant, écart d'une barre) ;
+// l'arrêt n'en dépend pas (fichier .halt). Passer à un fichier par EA (IDEA-027) si ce délai devient gênant.
 void QL_GuardWrite(const double peak, const bool halted, const long day, const double day_start)
 {
-   int h = FileOpen(QL_GuardFile(), FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ);
+   if(halted && !FileIsExist(QL_GuardHaltFile(), FILE_COMMON))
+   {
+      int hh = FileOpen(QL_GuardHaltFile(), FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ);
+      if(hh != INVALID_HANDLE) { FileWriteString(hh, StringFormat("%.2f", peak)); FileClose(hh); }
+   }
+   string tmp = "QLab\\guard_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "_" + IntegerToString(ChartID()) + ".tmp";
+   int h = FileOpen(tmp, FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(h == INVALID_HANDLE) return;
    FileWriteString(h, StringFormat("%.2f;%d;%I64d;%.2f", peak, halted ? 1 : 0, day, day_start));
    FileClose(h);
+   if(!FileMove(tmp, FILE_COMMON, QL_GuardFile(), FILE_COMMON | FILE_REWRITE)) FileDelete(tmp, FILE_COMMON);
 }
 
 // Met à jour l'état persistant (pic d'équité, arrêt, début de journée) ; refus motivé ou "".
@@ -204,7 +220,7 @@ string QL_AccountGuard(const long day)
    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
    if(!(eq > 0)) return "guard:equity_invalid";
    double peak, ds; bool halted; long d;
-   QL_GuardRead(peak, halted, d, ds);
+   if(!QL_GuardRead(peak, halted, d, ds)) return halted ? "guard:max_drawdown_halt" : "guard:state_unreadable";
    if(eq > peak) peak = eq;
    if(d != day || !(ds > 0)) { d = day; ds = eq; }
    if(!halted && (peak - eq) / peak * 100.0 >= QL_LIM_MAX_DD_PCT) halted = true;

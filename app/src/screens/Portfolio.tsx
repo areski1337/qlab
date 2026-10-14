@@ -12,7 +12,7 @@ export function Portfolio() {
   const [f, setF] = useState({ name: "Portefeuille", method: "min_corr", segment: "research", w_min: 0.05, w_max: 0.5 });
   const [cur, setCur] = useState<any>(null);
   const a = useAction();
-  const eligible = revs.data?.filter((r) => !["unverified", "rejected", "quarantined"].includes(r.status)) ?? null;
+  const eligible = revs.data?.filter((r) => ["oos_evaluated", "reference_matched", "mt5_validated", "demo_observed"].includes(r.status)) ?? null;
   const rep = cur?.report;
   const short = (s: string) => s.slice(-6);
   return (

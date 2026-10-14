@@ -282,12 +282,12 @@ def trial_sharpes(lab, version_id: str | None) -> list[float]:
     return list(by_rev.values())
 
 
-def transfer(g, caches: dict, costs: dict, risk, protocol) -> dict:
+def transfer(g, caches: dict, costs: dict, risk, protocol, lab=None) -> dict:
     """Mêmes règles sur d'autres instruments (fenêtre train+validation de chacun). Informatif, non bloquant :
     l'absence de transfert n'invalide pas une stratégie spécialisée, mais elle est rapportée."""
     out = {}
     for sym, c in caches.items():
-        seg = proto.segments(len(c.bars), protocol)
+        seg = proto.segments_for(lab, c.bars, protocol, freeze=False)  # frontières datées de cette série si figées
         try:
             _, m = _run(g, c, costs, risk, (seg["train"][0], seg["validation"][1]))
             out[sym] = _summ(m)
@@ -309,7 +309,7 @@ def run_suite(lab, rev: dict, cache, costs: dict, risk, protocol: dict, campaign
     trials = trial_sharpes(lab, cache.bars.version_id) or ([m_t["sharpe"]] if m_t["sharpe"] is not None else [])
     rep = {"window": window, "segments": {k: list(v) for k, v in seg.items()}, "base": _summ(m), "criteria": criteria}
     skipped = {"skipped": True, "reason": "critère éliminatoire déjà en échec : test coûteux non exécuté"}
-    # du moins coûteux au plus coûteux ; arrêt des tests restants au premier échec certain
+    # du moins coûteux au plus coûteux ; arrêt des tests restants au premier échec certain ou critère non calculable
     steps = [
         ("cost_stress", lambda: cost_stress(g, cache, costs, risk, window)),
         ("monte_carlo", lambda: monte_carlo(res["trades"], res["initial_equity"], seed=seed)),
@@ -324,8 +324,9 @@ def run_suite(lab, rev: dict, cache, costs: dict, risk, protocol: dict, campaign
     for name, fn in steps:
         rep[name] = dict(skipped) if failed else fn()
         if not failed:
-            failed = any(c["pass"] is False for c in checks(rep, criteria, partial=True).values())
-    rep["transfer"] = transfer(g, transfer_caches or {}, costs, risk, protocol)
+            # non calculable (None) = échec final aussi (`passed` exige True) : inutile de poursuivre
+            failed = any(c["pass"] is not True for c in checks(rep, criteria, partial=True).values())
+    rep["transfer"] = transfer(g, transfer_caches or {}, costs, risk, protocol, lab)
     rep["checks"] = checks(rep, criteria)
     rep["passed"] = all(c["pass"] is True for c in rep["checks"].values())
     return rep

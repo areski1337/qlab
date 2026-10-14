@@ -105,7 +105,7 @@ def advance(lab, rev_id: str, cache, costs: dict, risk, protocol: dict = proto.D
         m = ev["metrics"]
         trades = (ev.get("result") or lab.store.get_json(ev["trades_artifact"]))["trades"]
         n_oos = proto.segment_usage(lab, cache.bars.version_id, "oos")
-        dec = oos_decision(m, [t["r"] for t in trades], n_oos)
+        dec = oos_decision(m, [t["pnl"] / t["risk_amount"] for t in trades], n_oos)  # R net : commission et swap compris
         evidence = {"oos_evaluation": ev["id"], "oos_trades_artifact": ev["trades_artifact"],
                     "oos_multiplicity": n_oos, "oos_test": dec}
         if dec["pass"]:

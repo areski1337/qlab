@@ -158,3 +158,54 @@ def test_trial_budget_and_funnel(env):
     assert est["n_trials_total"] == 2000 and "supposée" in est["sd_source"]
     f = budget.funnel(lab, "camp_inexistante")
     assert f["reached"]["unverified"] == 0 and f["dominant_cause"] is None
+
+
+# --- cycles 2 et 3 ---
+
+# F-TRAD-018 : une graine qui a vu le segment OOS est refusée
+def test_seed_after_oos_refused(env):
+    from qlab.evolution import campaign
+    lab, bars, cache, rev = env
+    cfg = {"dataset_version_id": bars.version_id, "cost_profile": COSTS, "seed_revision_ids": [rev["id"]]}
+    campaign.create(lab, cfg)  # unverified : admise
+    for s in ("screened", "historically_tested", "robustness_tested", "oos_evaluated"):
+        gstore.set_status(lab.con, rev["id"], s, {"fixture": True}, {"test": s})
+    with pytest.raises(ValueError, match="hors échantillon"):
+        campaign.create(lab, cfg)
+
+
+# F-TRAD-012 : une estimation ne fige pas les frontières et les expose
+def test_budget_does_not_freeze_segments(env):
+    lab, bars, cache, rev = env
+    est = budget.estimate(lab, bars.version_id, 10)
+    assert lab.con.execute("SELECT COUNT(*) FROM segment_boundaries").fetchone()[0] == 0
+    assert est["segments"]["frozen"] is False and est["segments"]["train_end"] < est["segments"]["oos_end"]
+    proto.segments_for(lab, bars)
+    assert budget.estimate(lab, bars.version_id, 10)["segments"]["frozen"] is True
+
+
+# F-TRAD-019 : pas d'expérience de méthode sur une série de recherche
+def test_experiment_refused_on_research_series(env):
+    from qlab.evolution import campaign, meta
+    lab, bars, cache, rev = env
+    spec = {"base": {"dataset_version_id": bars.version_id, "cost_profile": COSTS}, "baseline": {}, "variant": {},
+            "seeds": [1, 2, 3], "metric": "front_size", "direction": "higher"}
+    meta.create(lab, "h", spec)  # série vierge : admise
+    campaign.create(lab, {"dataset_version_id": bars.version_id, "cost_profile": COSTS})
+    with pytest.raises(ValueError, match="série dédiée"):
+        meta.create(lab, "h", spec)
+
+
+# F-TRAD-015 : l'arrêt du fichier .halt prime sur le .csv, la levée supprime les deux
+def test_guard_halt_file(env, tmp_path, monkeypatch):
+    lab = env[0]
+    d = tmp_path / "QLab"
+    d.mkdir()
+    monkeypatch.setattr(monitor, "flag_path", lambda lab, magic=None: d / "EMERGENCY_STOP")
+    (d / "guard_12345.csv").write_text("1000.00;0;20000;1000.00", encoding="ascii")  # .csv réécrit sans arrêt
+    (d / "guard_12345.halt").write_text("1000.00", encoding="ascii")
+    (d / "guard_678.halt").write_text("1.00", encoding="ascii")  # arrêt sans .csv
+    st = {s["login"]: s for s in monitor.guard_states(lab)}
+    assert st["12345"]["halted"] and st["12345"]["peak_equity"] == 1000 and st["678"]["halted"]
+    assert monitor.reset_guard(lab, "12345", "test")["reset"]
+    assert not list(d.glob("guard_12345.*"))

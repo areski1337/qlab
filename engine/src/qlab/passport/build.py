@@ -115,6 +115,10 @@ def build(lab, rid: str) -> dict:
     if robustness:
         failed = [k for k, c in robustness["checks"].items() if c["pass"] is not True]
         interp.append("Tests de robustesse : tous satisfaits." if not failed else f"Robustesse : échecs ou non calculables {failed}.")
+    series_trials = ((robustness or {}).get("deflated_sharpe") or {}).get("n_trials")
+    if series_trials:
+        interp.append(f"{series_trials} stratégie(s) essayée(s) sur cette série au moment du test de robustesse "
+                      "(N du Sharpe dégonflé).")
     if n_candidates and n_candidates > 1:
         interp.append(f"Sélectionnée parmi {n_candidates} candidats : biais de sélection probable.")
 
@@ -140,7 +144,7 @@ def build(lab, rid: str) -> dict:
             "oos": oos["metrics"] if oos else None,
             "final_holdout": final["metrics"] if final else None,
             "compilations": comps, "parity": pars,
-            "multiplicity": {"campaign_candidates": n_candidates},
+            "multiplicity": {"campaign_candidates": n_candidates, "series_trials": series_trials},
         },
         "hypotheses": hyp,
         "interpretations": interp,

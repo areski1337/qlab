@@ -31,8 +31,10 @@ const DEFAULT_FORM = {
 async function retainedOf(cid: string): Promise<string[]> {
   const [c, g] = await Promise.all([api.get(`/campaigns/${cid}`), api.get(`/genomes?campaign=${cid}&limit=5000`)]);
   const front = (c.task?.result?.front ?? []).map((f: any) => f.revision_id);
-  const kept = (g as any[]).filter((r) => !["unverified", "rejected", "quarantined"].includes(r.status)).map((r) => r.id);
-  return [...new Set([...front, ...kept])].slice(0, 40);
+  // jamais une révision qui a vu le segment hors échantillon (le moteur la refuse) : le test OOS ne doit pas servir à sélectionner
+  const seedable = new Map((g as any[]).map((r) => [r.id, ["unverified", "screened", "historically_tested", "robustness_tested"].includes(r.status)]));
+  const kept = (g as any[]).filter((r) => r.status !== "unverified" && seedable.get(r.id)).map((r) => r.id);
+  return [...new Set([...front, ...kept])].filter((id) => seedable.get(id)).slice(0, 40);
 }
 
 export function Campaigns() {
@@ -117,6 +119,7 @@ export function Campaigns() {
             <b>Budget d'essais.</b> Cette série compte déjà {fmt(est.data.previous_trials_on_series, 0)} stratégie(s) essayée(s) ; avec ≈ {fmt(est.data.planned_trials, 0)} de plus,
             le Sharpe dégonflé exigera un Sharpe annualisé d'environ <b>{fmt(est.data.required_sharpe_annual, 2)}</b> sur {fmt(est.data.train_days, 0)} jours d'entraînement
             (maximum attendu par pur hasard : {fmt(est.data.sr0_annual, 2)} ; dispersion {est.data.sd_source}). Moins d'essais ou un historique plus long abaissent ce seuil.
+            {est.data.segments && <><br /><b>Segments{est.data.segments.frozen ? " (figés pour cette série)" : " (seront figés à la première évaluation)"}.</b> Entraînement jusqu'au {est.data.segments.train_end?.slice(0, 10) ?? "—"}, validation jusqu'au {est.data.segments.validation_end?.slice(0, 10) ?? "—"}, hors échantillon jusqu'au {est.data.segments.oos_end?.slice(0, 10) ?? "—"}, final jusqu'au {est.data.segments.final_end?.slice(0, 10) ?? "—"}.</>}
           </div>}
           {evals > 50000 && <div className="alert warn">Campagne très lourde (≈ {fmt(evals, 0)} backtests) : plusieurs heures à plusieurs jours selon la taille du dataset. Préférer « Standard » puis relancer depuis les meilleures stratégies.</div>}
           <h3>1 · Marché</h3>
@@ -154,7 +157,7 @@ export function Campaigns() {
               </select>
             </Field>
             {seedFrom && <span className="muted" style={{ paddingBottom: 14 }}>{seeds == null ? "chargement…" : seeds.length
-              ? `${seeds.length} stratégie(s) retenue(s) reprises comme point de départ (au plus la moitié de chaque tribu) ; réglages de la campagne source repris.`
+              ? `${seeds.length} stratégie(s) retenue(s) reprises comme point de départ (au plus la moitié de chaque tribu ; jamais celles déjà testées hors échantillon) ; réglages de la campagne source repris.`
               : "aucune stratégie retenue dans cette campagne : départ de zéro."}</span>}
           </div>
           <h3>4 · Effort</h3>

@@ -9,7 +9,7 @@
 | screened | ≥ min_trades/2 trades en train (ou front de Pareto final faisable) | id d'évaluation |
 | historically_tested | ≥ 30 trades sur train+validation, trades conservés | évaluation + artefact de trades |
 | robustness_tested | toutes les vérifications ci-dessous **calculables et réussies** | rapport de robustesse (artefact) |
-| oos_evaluated | ≥ 15 trades OOS, expectancy > 0, PF > 1 si défini, **et** test t unilatéral de la moyenne des R au seuil corrigé α_eff = 1 − (1 − 0,05)^(1/m), m = révisions déjà évaluées sur le segment oos de la série | évaluation OOS + test + multiplicité |
+| oos_evaluated | ≥ 15 trades OOS, expectancy > 0, PF > 1 si défini, **et** test t unilatéral de la moyenne des R nets (commission et swap compris) au seuil corrigé α_eff = 1 − (1 − 0,05)^(1/m), m = révisions déjà évaluées sur le segment oos de la série | évaluation OOS + test + multiplicité |
 | reference_matched | concordance des signaux EA/référence ≥ 98 % dans le Strategy Tester | run de parité + trace |
 | mt5_validated | note de parité A ou B, aucune divergence critique | run de parité |
 | demo_observed | ≥ 20 trades démo sans alerte de dégradation | observation |
@@ -28,7 +28,7 @@
 - **Ordre d'exécution** : coûts, Monte Carlo, DSR, walk-forward, sensibilité, baseline, WFO ; au premier critère en échec, les tests restants ne sont pas exécutés (`skipped`) et la stratégie est rejetée. *Limite* : suppose des essais indépendants ; les candidats génétiques sont corrélés, donc N effectif est surestimé.
 
 ## Multiplicité et biais de sélection
-Tous les candidats (y compris rejetés) sont enregistrés avec leurs métriques. Le meilleur résultat d'une campagne n'est jamais présenté comme estimation de la performance future (avertissement dans chaque résultat de campagne et passeport). Les évaluations OOS comptent le nombre de révisions évaluées sur le même segment de la série (toutes versions), et ce nombre resserre le seuil de décision ; le holdout final perd son statut indépendant dès qu'une seconde révision y est évaluée, toutes versions du dataset confondues.
+Tous les candidats (y compris rejetés) sont enregistrés avec leurs métriques. Le meilleur résultat d'une campagne n'est jamais présenté comme estimation de la performance future (avertissement dans chaque résultat de campagne et passeport). Les évaluations OOS comptent le nombre de révisions évaluées sur le même segment de la série (toutes versions), et ce nombre resserre le seuil de décision ; le holdout final perd son statut indépendant dès qu'une seconde révision y est évaluée, toutes versions du dataset confondues. Une relance de campagne n'accepte comme graines que des révisions qui n'ont pas vu le segment oos (statut ≤ `robustness_tested`) : sinon le test OOS deviendrait une étape de sélection. Les expériences de méthode exigent une série sans campagne de recherche. Une estimation (budget d'essais) ne fige jamais les frontières de segments ; l'écran Campagnes les affiche.
 
 ## Métriques
 Après coûts (spread, commission, swap en mode points, glissement). Sharpe/Sortino journaliers (journée 17:00 NY, jours sans trade = 0) annualisés √252, taux sans risque 0. Profit factor indéfini (`None`) sans perte. Drawdown sur equity de clôture des trades (flottant non inclus ; MAE par trade disponible).

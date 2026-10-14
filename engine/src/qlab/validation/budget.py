@@ -14,6 +14,7 @@ from collections import Counter
 
 import numpy as np
 
+from ..core.timeutil import ts_to_iso
 from . import protocol as proto
 from .robustness import EULER, trial_sharpes
 
@@ -35,7 +36,7 @@ def estimate(lab, dataset_version_id: str, planned_trials: int, dsr_min: float =
     from ..data.dataset import load_bars
     from ..features.sessions import trading_day
     bars = load_bars(lab, dataset_version_id, verify=False)
-    seg = proto.segments_for(lab, bars, proto.DEFAULT_PROTOCOL)
+    seg = proto.segments_for(lab, bars, proto.DEFAULT_PROTOCOL, freeze=False)  # une estimation ne fige rien
     a, b = seg["train"]
     days = trading_day(np.array([int(bars.ts[a]), int(bars.ts[b - 1])]))
     t_days = int(np.sum((np.arange(days[0], days[1] + 1) + 3) % 7 < 5))
@@ -47,6 +48,11 @@ def estimate(lab, dataset_version_id: str, planned_trials: int, dsr_min: float =
            "train_days": t_days, "trial_sharpe_sd_annual": sd,
            "sd_source": "mesurée sur la série" if measured else "supposée (moins de 30 essais sur la série)",
            "dsr_min": dsr_min, **required_sharpe(n, sd, t_days, dsr_min)}
+    frozen = lab.con.execute("SELECT 1 FROM segment_boundaries WHERE dataset_id=? AND protocol_sha256=?",
+                             (proto.dataset_of(lab, dataset_version_id), proto.protocol_sha(proto.DEFAULT_PROTOCOL))).fetchone()
+    out["segments"] = {"frozen": frozen is not None,
+                       **{f"{k}_end": ts_to_iso(int(bars.ts[seg[k][1] - 1])) if seg[k][1] > seg[k][0] else None
+                          for k in ("train", "validation", "oos", "final")}}
     out["note"] = ("Estimation : N réel plus faible si des candidats sont identiques (dédoublonnés). Chaque essai "
                    "supplémentaire sur cette série relève le seuil de toutes les campagnes futures.")
     return out

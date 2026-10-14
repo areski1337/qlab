@@ -57,6 +57,15 @@ def create(lab, hypothesis: str, spec: dict) -> tuple[str, str]:
     metric, direction, min_win_ratio, max_p}"""
     spec = {"min_win_ratio": 0.7, "max_p": 0.1, **spec}
     validate_spec(spec)
+    # la méthode ne se choisit pas sur la série qu'elle servira à explorer (validation lue, N du DSR gonflé)
+    from ..validation.protocol import dataset_of
+    used = lab.con.execute(
+        "SELECT 1 FROM campaigns c JOIN dataset_versions v ON v.id=json_extract(c.config_json, '$.dataset_version_id') "
+        "WHERE v.dataset_id=? AND json_extract(c.config_json, '$.parent_task_id') IS NULL LIMIT 1",
+        (dataset_of(lab, spec["base"].get("dataset_version_id")),)).fetchone()
+    if used:
+        raise ValueError("série déjà utilisée par une campagne de recherche : utiliser une série dédiée aux expériences "
+                         "(autre instrument ou données synthétiques)")
     eid = new_id("exp")
     tid = queue.submit(lab.con, "engine_experiment", {"experiment_id": eid})
     lab.con.execute("INSERT INTO engine_experiments (id, hypothesis, spec_json, spec_sha256, task_id, created_at) "
@@ -73,7 +82,7 @@ def run_task(lab, task: dict) -> dict:
     for seed in spec["seeds"]:
         pair = {}
         for arm in ("baseline", "variant"):
-            cfg = {**spec["base"], **spec[arm], "seed": seed, "name": f"{eid}:{arm}:{seed}"}
+            cfg = {**spec["base"], **spec[arm], "seed": seed, "name": f"{eid}:{arm}:{seed}", "parent_task_id": task["id"]}
             t0 = time.time()
             cid, res = _run_campaign_inline(lab, cfg)
             pair[arm] = {"campaign": cid, "value": METRICS[spec["metric"]](res), "seconds": round(time.time() - t0, 1)}
@@ -100,6 +109,7 @@ def _run_campaign_inline(lab, cfg: dict) -> tuple[str, dict]:
     queue.transition(lab.con, tid, "running")
     res = camp.run_task(lab, queue.get(lab.con, tid))
     if "stopped" in res:
+        queue.transition(lab.con, tid, "cancelled")  # sous-campagne abandonnée : l'expérience repartira de zéro
         raise RuntimeError(f"sous-campagne {cid} interrompue ({res['stopped']}) : expérience invalide")
     queue.transition(lab.con, tid, "completed", result=res)
     return cid, res

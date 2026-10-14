@@ -126,14 +126,17 @@ def set_flag(lab, magic: int | None, on: bool, reason: str) -> dict:
 def guard_states(lab) -> list[dict]:
     """État des gardes compte persistantes des EA (fichiers QLab/guard_<login>.csv du dossier commun MT5, lecture seule)."""
     out = []
-    for f in sorted(flag_path(lab).parent.glob("guard_*.csv")):
+    d = flag_path(lab).parent
+    for login in sorted({f.stem.removeprefix("guard_") for f in [*d.glob("guard_*.csv"), *d.glob("guard_*.halt")]}):
+        halt = (d / f"guard_{login}.halt").exists()  # arrêt persistant séparé, jamais effacé par l'EA
+        base = {"login": login, "account_masked": f"***{login[-3:]}", "halted": halt}
+        f = d / f"guard_{login}.csv"
         try:
             peak, halted, day, ds = f.read_text(encoding="ascii").strip().split(";")[:4]
-            login = f.stem.removeprefix("guard_")
-            out.append({"login": login, "account_masked": f"***{login[-3:]}", "peak_equity": float(peak),
-                        "halted": halted == "1", "day_start_equity": float(ds), "day": int(day)})
+            out.append({**base, "peak_equity": float(peak), "halted": halt or halted == "1",
+                        "day_start_equity": float(ds), "day": int(day)})
         except (ValueError, OSError) as e:
-            out.append({"file": f.name, "error": str(e)})
+            out.append({**base, "file": f.name, "error": str(e)})
     return out
 
 
@@ -141,9 +144,10 @@ def reset_guard(lab, login: str, reason: str) -> dict:
     """Lève l'arrêt persistant de la garde compte (action manuelle tracée) : l'EA repart du niveau d'équité actuel."""
     if not login.isdigit():
         raise ValueError("login invalide")
-    p = flag_path(lab).parent / f"guard_{login}.csv"
-    existed = p.exists()
-    p.unlink(missing_ok=True)
+    ps = [flag_path(lab).parent / f"guard_{login}.{ext}" for ext in ("csv", "halt")]
+    existed = any(p.exists() for p in ps)
+    for p in ps:
+        p.unlink(missing_ok=True)
     audit(lab.con, "demo.guard_reset", f"***{login[-3:]}", reason=reason, existed=existed)
     return {"reset": existed}
 

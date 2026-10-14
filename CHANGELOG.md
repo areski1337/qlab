@@ -2,6 +2,21 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des composants : `engine/src/qlab/core/versions.py`.
 
+## [0.6.1] — 2026-10-14
+Correctifs issus de la revue produit continue (cycles 2 et 3, `product-intelligence/audits/`).
+### Corrigé
+- EA 1.4 : l'arrêt de la garde compte est un fichier séparé (`guard_<login>.halt`) jamais effacé par l'EA ; un état illisible refuse les entrées ; écriture atomique. Plusieurs EA ne peuvent plus lever l'arrêt par écritures concurrentes.
+- Relance de campagne : les stratégies déjà testées hors échantillon ne sont plus admises comme point de départ (le test OOS ne sert plus à sélectionner).
+- Décision hors échantillon sur le R net (commission et swap compris). `validation_protocol` 1.2.
+- Le budget d'essais ne fige plus les frontières de segments ; frontières affichées à la création d'une campagne.
+- Transfert multi-instruments : frontières datées de chaque série quand elles existent.
+- Robustesse : arrêt anticipé aussi sur un critère non calculable.
+- Expériences de méthode : pause et annulation propagées aux sous-campagnes ; refus d'une série déjà utilisée par une campagne de recherche.
+- Portefeuille manuel : stratégies ≥ hors échantillon uniquement.
+- Passeport : N d'essais de la série (Sharpe dégonflé).
+### Documentation
+- CHANGELOG : les éléments publiés entre 0.2.0 et 0.5.1 sont regroupés sous leur propre titre ; `ENGINE_VERSION` documentée (format de cache, distinct de la version de l'application).
+
 ## [0.6.0] — 2026-10-14
 Correctifs issus de la revue produit continue (cycle 1, `product-intelligence/audits/2026-10-14-cycle-001.md`).
 ### Corrigé
@@ -21,7 +36,7 @@ Correctifs issus de la revue produit continue (cycle 1, `product-intelligence/au
 - IPC : contrôle d'origine sur tous les canaux.
 - Tests : client HTTP `httpx2` (dépréciation Starlette).
 
-## [Non publié]
+## [0.2.0 – 0.5.1] — 2026-10-13/14 (publiés, regroupés)
 ### Corrigé
 - Campagne « bloquée à 0 % » : la progression n'avançait qu'en fin de génération (très longue avec de grandes populations). Les évaluations se font maintenant par lots : progression visible dans la génération, temps restant estimé, pause et arrêt pris en compte en quelques secondes (la génération interrompue est rejouée à la reprise, évaluations déjà faites réutilisées depuis le cache).
 - Boutons Pause / Reprendre / Arrêter sur toute tâche en cours (laboratoire, Tâches & journaux, panneau d'activité) ; l'arrêt d'une campagne en cours n'était pas proposé. Avertissement pour les campagnes de plus de 50 000 évaluations.
