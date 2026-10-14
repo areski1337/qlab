@@ -1,6 +1,6 @@
 {
   "name": "qlab-desktop",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "QLab — plateforme locale de recherche quantitative",
   "main": "dist-electron/main.js",
