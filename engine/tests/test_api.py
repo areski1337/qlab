@@ -36,6 +36,20 @@ def test_token_required(client):
     assert h["sqlite"] == "ok" and "désactivé" in h["live_trading"]
 
 
+def test_non_ascii_token_gives_401(client):
+    """Un en-tête X-QLab-Token non ASCII doit donner 401, jamais 500 ni exception (T-003)."""
+    # La fixture `client` initialise STATE (racine + jeton) ; on utilise un client sans en-tête par défaut.
+    raw =TestClient(api.app, raise_server_exceptions=False)
+    # Octets latin-1 : Starlette décode les en-têtes en latin-1, le serveur reçoit donc "é" * 30.
+    r = raw.get("/api/v1/health", headers={"X-QLab-Token": "é".encode("latin-1") * 30})
+    assert r.status_code == 401
+    assert r.json() == {"error": "jeton invalide"}
+    # Non-régression : jeton absent -> 401, jeton correct -> 200.
+    assert raw.get("/api/v1/health").status_code == 401
+    ok = raw.get("/api/v1/health", headers={"X-QLab-Token": TOKEN})
+    assert ok.status_code == 200 and ok.json()["sqlite"] == "ok"
+
+
 def test_end_to_end_via_api(client):
     c, root = client
     t = c.post("/api/v1/datasets/synthetic", json={"n": 15000, "seed": 3}).json()
