@@ -224,3 +224,30 @@ def test_auto_validation_submits_top_front(lab):
     for i in ids:
         q = queue.get(lab.con, i)
         assert q["kind"] == "advance" and q["payload"]["campaign_id"] == cid and q["payload"]["stop_at"] == "oos_evaluated"
+
+
+def test_pause_mid_generation_then_resume_is_identical(tmp_path, monkeypatch):
+    fronts = []
+    for k, interrupt in enumerate((False, True)):
+        lab = Lab.open(tmp_path / f"m{k}")
+        dsv = import_synth(lab)
+        cid, tid = campaign.create(lab, small_cfg(dsv, population=12))
+        if interrupt:
+            orig, n = campaign._eval_local, {"c": 0}
+
+            def eval_then_pause(c, content, w):
+                n["c"] += 1
+                if n["c"] == 10:  # au milieu de la première évaluation (12 génomes, lots de 8)
+                    queue.transition(lab.con, tid, "paused")
+                return orig(c, content, w)
+            monkeypatch.setattr(campaign, "_eval_local", eval_then_pause)
+            t = runner.run_next(lab)
+            assert t["state"] == "paused" and t["result"] is None
+            assert 0 < t["progress"] < 1  # progression visible avant la fin de la première génération
+            monkeypatch.setattr(campaign, "_eval_local", orig)
+            runner.resume(lab, tid)
+        t = runner.run_next(lab)
+        assert t["state"] == "completed", t["error"]
+        fronts.append(sorted((f["train"]["n_trades"], f["train"]["net_profit"]) for f in t["result"]["front"]))
+        lab.close()
+    assert fronts[0] == fronts[1]

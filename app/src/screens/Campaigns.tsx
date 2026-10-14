@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import { Badge, Btn, Card, Err, Field, fmt, PageHead, Seg, Table, Tile, useAction, useApi } from "../ui";
+import { Badge, Btn, Card, Err, Field, fmt, PageHead, Seg, Table, TaskControls, Tile, useAction, useApi } from "../ui";
 import { Bars, Explain, Lines, Scatter } from "../charts";
 import { useNav } from "../main";
 
@@ -111,7 +111,8 @@ export function Campaigns() {
     <div>
       <PageHead title="Campagnes" sub="Recherche génétique sur entraînement + validation. Les segments hors échantillon et final restent scellés." />
       <div className="grid">
-        <Card title="Nouvelle campagne" wide actions={<span className="muted" style={{ fontFamily: "var(--font-num)" }}>≈ {fmt(evals, 0)} évaluations</span>}>
+        <Card title="Nouvelle campagne" wide actions={<span className={evals > 50000 ? "real-off" : "muted"} style={{ fontFamily: "var(--font-num)" }}>≈ {fmt(evals, 0)} évaluations</span>}>
+          {evals > 50000 && <div className="alert warn">Campagne très lourde (≈ {fmt(evals, 0)} backtests) : plusieurs heures à plusieurs jours selon la taille du dataset. Préférer « Standard » puis relancer depuis les meilleures stratégies.</div>}
           <h3>1 · Marché</h3>
           <div className="row">
             <Field label="Instrument et timeframe">
@@ -242,7 +243,17 @@ export function CampaignLab() {
   }, [hist]);
   const tribes = Object.keys(byTribe);
   const ops = Object.entries(d?.state_snapshot?.op_stats ?? {}).map(([k, v]: any) => ({ id: k, op: k, tries: v[0], ok: v[1], rate: v[0] ? v[1] / v[0] : null }));
-  const act = (x: string) => a.run(() => api.post(`/tasks/${d.task_id}/${x}`), () => `Action « ${x} » appliquée`);
+  const [msg, setMsg] = useState<string | null>(null);
+  // temps restant estimé d'après la vitesse observée depuis l'ouverture de l'écran (aucune donnée inventée avant 2 mesures)
+  const seen = useRef<{ t: number; p: number } | null>(null);
+  const eta = (p: number) => {
+    const now = Date.now();
+    if (!seen.current || p < seen.current.p) { seen.current = { t: now, p }; return null; }
+    const rate = (p - seen.current.p) / (now - seen.current.t);
+    if (rate <= 0 || p >= 1) return null;
+    const m = Math.round((1 - p) / rate / 60000);
+    return m < 120 ? `≈ ${m} min restantes` : m < 2880 ? `≈ ${fmt(m / 60, 1)} h restantes` : `≈ ${fmt(m / 1440, 1)} jours restants`;
+  };
   const last = (t: string) => byTribe[t]?.[byTribe[t].length - 1];
   return (
     <div>
@@ -254,17 +265,16 @@ export function CampaignLab() {
       {d && <>
         <div className="tiles">
           <Tile l="État" v={<Badge s={d.task.state} />} s={`${d.state_snapshot?.phase ?? "pas encore démarrée"} · génération ${d.state_snapshot?.gen ?? 0}`} />
-          <Tile l="Progression" v={`${fmt(d.task.progress * 100, 0)} %`} s={<div className="progress"><i style={{ width: `${d.task.progress * 100}%` }} /></div>} />
+          <Tile l="Progression" v={`${fmt(d.task.progress * 100, 1)} %`} s={<>{eta(d.task.progress) ?? "estimation après quelques lots…"}<div className="progress"><i style={{ width: `${d.task.progress * 100}%` }} /></div></>} />
           <Tile l="Candidats" v={fmt(d.n_candidates, 0)} s="révisions générées" />
           <Tile l="Évaluations" v={fmt(d.n_evaluations, 0)} s="backtests exécutés" />
           <Tile l="Front final" v={fmt(d.task.result?.front?.length ?? 0, 0)} s="non dominés après fusion" />
         </div>
         <div className="grid">
+          {msg && <div className="alert ok" style={{ gridColumn: "1 / -1" }}>{msg}</div>}
           <Card title={d.name} wide actions={<>
             <Btn disabled={d.task.state !== "completed"} title="Nouvelle campagne partant des stratégies retenues de celle-ci" onClick={() => go({ screen: "campaigns", seedFrom: d.id })}>Relancer depuis cette campagne</Btn>
-            <Btn busy={a.busy} disabled={!["queued", "running"].includes(d.task.state)} onClick={() => act("pause")}>Pause</Btn>
-            <Btn busy={a.busy} disabled={d.task.state !== "paused"} onClick={() => act("resume")}>Reprendre</Btn>
-            <Btn kind="danger" busy={a.busy} disabled={["completed", "cancelled", "failed"].includes(d.task.state) || d.task.state === "running"} onClick={() => act("cancel")}>Annuler</Btn>
+            <TaskControls t={{ id: d.task_id, kind: "campaign", state: d.task.state }} onDone={(m) => { setMsg(m); c.reload(); }} />
           </>}>
             {a.view}
             {d.task.error && <div className="alert err">{d.task.error}</div>}

@@ -13,7 +13,7 @@ import { Library } from "./screens/Library";
 import { Personalize } from "./personalize";
 import { PrefsProvider, THEMES, usePrefs } from "./prefs";
 import { Icon, Logo } from "./icons";
-import { Badge, fmt, useApi } from "./ui";
+import { Badge, fmt, TaskControls, useApi } from "./ui";
 
 export type Nav = { screen: string; rev?: string; campaign?: string; seedFrom?: string };
 export const NavCtx = createContext<{ nav: Nav; go: (n: Nav) => void }>({ nav: { screen: "dash" }, go: () => {} });
@@ -160,7 +160,8 @@ function Activity({ events }: { events: { ts: string; text: string; err?: boolea
           <div key={x.id} className="it" onClick={() => go({ ...nav, screen: x.kind === "campaign" ? "lab" : "tasks" })}>
             <div className="t"><b>{x.kind}</b><Badge s={x.state} /></div>
             <div className="progress" style={{ marginTop: 6 }}><i style={{ width: `${(x.progress ?? 0) * 100}%` }} /></div>
-            <div className="muted" style={{ fontSize: 11, marginTop: 4, fontFamily: "var(--font-num)" }}>{fmt((x.progress ?? 0) * 100, 0)} % · {x.id}</div>
+            <div className="muted" style={{ fontSize: 11, marginTop: 4, fontFamily: "var(--font-num)" }}>{fmt((x.progress ?? 0) * 100, 1)} % · {x.id}</div>
+            <div style={{ marginTop: 6 }}><TaskControls t={x} compact onDone={() => t.reload()} /></div>
           </div>))}
       </div>
       <h4>Flux d'événements</h4>

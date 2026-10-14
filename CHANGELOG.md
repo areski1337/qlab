@@ -3,6 +3,9 @@
 Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des composants : `engine/src/qlab/core/versions.py`.
 
 ## [Non publié]
+### Corrigé
+- Campagne « bloquée à 0 % » : la progression n'avançait qu'en fin de génération (très longue avec de grandes populations). Les évaluations se font maintenant par lots : progression visible dans la génération, temps restant estimé, pause et arrêt pris en compte en quelques secondes (la génération interrompue est rejouée à la reprise, évaluations déjà faites réutilisées depuis le cache).
+- Boutons Pause / Reprendre / Arrêter sur toute tâche en cours (laboratoire, Tâches & journaux, panneau d'activité) ; l'arrêt d'une campagne en cours n'était pas proposé. Avertissement pour les campagnes de plus de 50 000 évaluations.
 ### Ajouté
 - Validation automatique : `auto_validate_top` (défaut 5 dans l'interface) soumet en fin de campagne la validation complète (filtrage → hors échantillon) des N meilleures du front, classées par Sharpe de validation.
 - Éditeur visuel de stratégie (écran Génome) : arbre ET / OU / NON, comparaisons et événements sur tous les indicateurs, sorties, risque et gestion ; validation et description en direct par le moteur ; bascule JSON.

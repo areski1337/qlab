@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
-import { Badge, Btn, Card, Err, Field, fmt, Json, PageHead, Table, useAction, useApi, utc } from "../ui";
+import { Badge, Btn, Card, Err, Field, fmt, Json, PageHead, Table, TaskControls, useAction, useApi, utc } from "../ui";
 
 export function Tasks() {
   const t = useApi<any[]>("/tasks", [], true);
@@ -22,10 +22,8 @@ export function Tasks() {
             { k: "progress", t: "Progr.", f: (r) => <div style={{ display: "flex", gap: 6, alignItems: "center" }}><div className="progress" style={{ width: 70, minWidth: 70 }}><i style={{ width: `${r.progress * 100}%` }} /></div>{fmt(r.progress * 100, 0)} %</div> }, { k: "attempts", t: "Essais", num: true },
             { k: "error", t: "Erreur", f: (r) => (r.error ?? "").slice(0, 80) },
             { k: "id", t: "Actions", f: (r) => <span className="actions" onClick={(e) => e.stopPropagation()}>
-              {["queued", "running"].includes(r.state) && r.kind === "campaign" && <button className="btn" onClick={() => act(r.id, "pause")}>Pause</button>}
-              {r.state === "paused" && <button className="btn" onClick={() => act(r.id, "resume")}>Reprendre</button>}
+              <TaskControls t={r} onDone={() => t.reload()} />
               {r.state === "failed" && <button className="btn" onClick={() => act(r.id, "retry")}>Relancer</button>}
-              {["queued", "paused"].includes(r.state) && <button className="btn danger" onClick={() => act(r.id, "cancel")}>Annuler</button>}
             </span> }]} />
         </Card>
         {detail.data && <Card title={`Tâche ${sel.id}`} wide><Json v={detail.data} /></Card>}

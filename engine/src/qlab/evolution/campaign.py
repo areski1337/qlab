@@ -59,6 +59,11 @@ DEFAULT_CONFIG = {
 }
 
 
+class Stopped(Exception):
+    """Pause ou annulation demandée pendant une génération : la génération en cours est abandonnée
+    (reprise depuis le dernier checkpoint ; les évaluations déjà faites restent en cache)."""
+
+
 def _v(x, worst=-1e6):
     return worst if x is None or not math.isfinite(x) else float(x)
 
@@ -186,11 +191,20 @@ class Campaign:
                 out[i] = hit["metrics"]
             elif k not in [keys[j] for j in todo]:
                 todo.append(i)
-        results = list(pool.map(_eval, [revs[i]["content"] for i in todo], [w] * len(todo))) if pool else \
-            [_eval_local(self, revs[i]["content"], w) for i in todo]
-        for i, m in zip(todo, results):
-            proto.store(self.lab, keys[i], revs[i]["id"], self.cache, self.cfg["cost_profile"], self.risk, segment, w,
-                        self.cfg["protocol"], m, None, self.cid, False)
+        # par lots : pause/annulation prises en compte en quelques secondes, progression visible dans la génération
+        step = max(8, 4 * max(1, int(self.cfg["workers"])))
+        for a in range(0, len(todo), step):
+            if queue.get(self.lab.con, self.task_id)["state"] in ("paused", "cancelled"):
+                raise Stopped()
+            part = todo[a:a + step]
+            results = list(pool.map(_eval, [revs[i]["content"] for i in part], [w] * len(part))) if pool else \
+                [_eval_local(self, revs[i]["content"], w) for i in part]
+            for i, m in zip(part, results):
+                proto.store(self.lab, keys[i], revs[i]["id"], self.cache, self.cfg["cost_profile"], self.risk, segment, w,
+                            self.cfg["protocol"], m, None, self.cid, False)
+            lo, hi = getattr(self, "span", (0.0, 0.0))
+            self.progress = max(getattr(self, "progress", 0.0), lo + (hi - lo) * (a + len(part)) / len(todo))
+            queue.set_progress(self.lab.con, self.task_id, self.progress)
         for i, k in enumerate(keys):
             if out[i] is None:
                 out[i] = proto.find(self.lab, k)["metrics"]
@@ -263,12 +277,17 @@ class Campaign:
                 if st["phase"] == "merge" and st["gen"] >= total:
                     break
                 tribes = self.cfg["tribes"] if st["phase"] == "tribes" else ["merge"]
-                for t in tribes:
-                    self.generation(st, t, rng, pool)
+                for k, t in enumerate(tribes):
+                    self.span = ((st["gen"] + k / len(tribes)) / total, (st["gen"] + (k + 1) / len(tribes)) / total)
+                    try:
+                        self.generation(st, t, rng, pool)
+                    except Stopped:
+                        return {"stopped": queue.get(lab.con, self.task_id)["state"], "gen": st["gen"]}
                 st["gen"] += 1
                 st["rng"] = _rng_dump(rng)
                 checkpoints.save(lab.con, lab.store, self.task_id, st)
-                queue.set_progress(lab.con, self.task_id, st["gen"] / total)
+                self.progress = st["gen"] / total
+                queue.set_progress(lab.con, self.task_id, self.progress)
             return self.finish(st, pool)
         finally:
             if pool:

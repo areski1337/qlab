@@ -136,6 +136,29 @@ export function Table({ cols, rows, onRow, empty = "Aucune donnée." }: {
   );
 }
 
+/** Pause / reprise / arrêt d'une tâche. Une campagne s'arrête en quelques secondes (fin du lot en cours) et reprend
+ * depuis sa dernière génération ; les autres tâches en cours ne peuvent qu'être arrêtées (le calcul déjà lancé se
+ * termine en arrière-plan et son résultat est ignoré). */
+export function TaskControls({ t, onDone, compact }: { t: { id: string; kind: string; state: string }; onDone?: (msg: string) => void; compact?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const act = async (x: "pause" | "resume" | "cancel", msg: string) => {
+    if (x === "cancel" && !window.confirm("Arrêter définitivement cette tâche ? Elle ne pourra pas être reprise.")) return;
+    setBusy(true);
+    try { await api.post(`/tasks/${t.id}/${x}`); onDone?.(msg); } catch (e: any) { onDone?.(e.message); } finally { setBusy(false); }
+  };
+  const canPause = t.state === "queued" || (t.state === "running" && t.kind === "campaign");
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  return (
+    <span className="actions" onClick={stop}>
+      {canPause && <Btn busy={busy} className={compact ? "ghost" : ""} title="Suspendre : reprise possible plus tard" onClick={() => act("pause", "Pause demandée : arrêt à la fin du lot en cours.")}>❚❚ Pause</Btn>}
+      {t.state === "paused" && <Btn busy={busy} className={compact ? "ghost" : ""} onClick={() => act("resume", "Reprise : la tâche repart de son dernier point de sauvegarde.")}>▶ Reprendre</Btn>}
+      {["queued", "validating", "running", "paused"].includes(t.state) && <Btn kind="danger" busy={busy}
+        title={t.state === "running" && t.kind !== "campaign" ? "Le calcul déjà lancé se termine en arrière-plan ; son résultat sera ignoré" : "Arrêt définitif"}
+        onClick={() => act("cancel", "Tâche arrêtée.")}>■ Arrêter</Btn>}
+    </span>
+  );
+}
+
 export function Json({ v }: { v: any }) {
   return <pre className="json">{JSON.stringify(v, null, 2)}</pre>;
 }
