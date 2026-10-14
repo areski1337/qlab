@@ -9,7 +9,7 @@ export function Data() {
   const [n, setN] = useState("2000");
   const bars = useApi(sel ? `/datasets/${sel.id}/bars?start=-${n}&limit=${n}` : null, [sel?.id, n]);
   const imp = useAction(), syn = useAction(), st = useAction();
-  const [f, setF] = useState({ symbol: "XAUUSD", tfs: "M5,H1", from: "2020-01-01", to: new Date().toISOString().slice(0, 10), tz: "NY+7" });
+  const [f, setF] = useState({ symbol: "XAUUSD", tfs: "M5,H1", from: "2020-01-01", to: new Date().toISOString().slice(0, 10), tz: "NY+7", daily: false, at: "06:00" });
   const [s, setS] = useState({ n: 100000, seed: 7 });
   const [mt5, setMt5] = useState<any>(null);
   const b = bars.data as any;
@@ -67,10 +67,22 @@ export function Data() {
               <select value={f.tz} onChange={(e) => setF({ ...f, tz: e.target.value })}><option>NY+7</option><option>UTC</option><option>UTC+2</option><option>UTC+3</option></select>
             </Field>
           </div>
+          <div className="row" style={{ alignItems: "center" }}>
+            <label><input type="checkbox" checked={f.daily} onChange={(e) => setF({ ...f, daily: e.target.checked })} /> Mettre à jour chaque jour</label>
+            {f.daily && <Field label="Heure (UTC)"><input type="time" value={f.at} onChange={(e) => setF({ ...f, at: e.target.value })} /></Field>}
+          </div>
           <div className="actions">
-            <Btn kind="primary" busy={imp.busy} onClick={() => imp.run(() => api.post("/datasets/import-mt5", {
-              symbol: f.symbol, timeframes: f.tfs.split(",").map((x) => x.trim()).filter(Boolean), from: f.from, to: f.to, tz_profile: f.tz,
-            }), (r) => `Import soumis (tâche ${r.task_id}).`)}>Importer</Btn>
+            <Btn kind="primary" busy={imp.busy} onClick={() => imp.run(async () => {
+              const p = { symbol: f.symbol, timeframes: f.tfs.split(",").map((x) => x.trim()).filter(Boolean), from: f.from, tz_profile: f.tz };
+              const r = await api.post("/datasets/import-mt5", { ...p, to: f.to });
+              if (f.daily) {
+                const [hh, mm] = f.at.split(":").map(Number), t = new Date();
+                t.setUTCHours(hh, mm, 0, 0);
+                if (t <= new Date()) t.setUTCDate(t.getUTCDate() + 1);
+                await api.post("/schedules", { name: `Mise à jour ${p.symbol} ${p.timeframes.join("/")}`, kind: "import_mt5", payload: p, every: "daily", first_run_utc: t.toISOString() });
+              }
+              return r;
+            }, (r) => `Import soumis (tâche ${r.task_id})${f.daily ? " ; mise à jour quotidienne programmée" : ""}.`)}>Importer</Btn>
             <Btn busy={st.busy} onClick={() => st.run(async () => { const r = await api.get("/mt5/status"); setMt5(r); return r; }, () => "Diagnostic MT5 effectué")}>Tester la connexion MT5</Btn>
           </div>
           {imp.view}{st.view}

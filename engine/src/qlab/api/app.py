@@ -247,6 +247,78 @@ def features():
                         for k, p in s.params.items()}} for s in REGISTRY.values()]
 
 
+# ---------------------------------------------------------------- bibliothèque de stratégies
+@app.get(f"{API}/library")
+def library(lab=Depends(L)):
+    """Stratégies annotées ou ayant franchi le filtrage, avec la dernière évaluation de recherche (ou train)."""
+    out = rows(lab.con.execute(
+        "SELECT g.id, g.status, g.campaign_id, g.created_at, COALESCE(n.favorite,0) AS favorite, "
+        "COALESCE(n.tags_json,'[]') AS tags_json, COALESCE(n.note,'') AS note, "
+        "(SELECT metrics_json FROM evaluations e WHERE e.revision_id=g.id AND e.segment IN ('research','train') "
+        " ORDER BY e.segment='research' DESC, e.created_at DESC LIMIT 1) AS metrics_json "
+        "FROM genome_revisions g LEFT JOIN strategy_notes n ON n.revision_id=g.id "
+        "WHERE n.revision_id IS NOT NULL OR g.status NOT IN ('unverified','rejected') ORDER BY g.created_at DESC LIMIT 2000"))
+    for r in out:
+        r["tags"] = json.loads(r.pop("tags_json"))
+        r["metrics"] = json.loads(r.pop("metrics_json") or "null")
+    return out
+
+
+class NotesIn(BaseModel):
+    favorite: bool = False
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    note: str = Field("", max_length=5000)
+
+
+@app.put(f"{API}/genomes/{{rid}}/notes")
+def put_notes(rid: str, body: NotesIn, lab=Depends(L)):
+    if not lab.con.execute("SELECT 1 FROM genome_revisions WHERE id=?", (rid,)).fetchone():
+        raise HTTPException(404, "révision inconnue")
+    tags = sorted({t.strip()[:32] for t in body.tags if t.strip()})
+    lab.con.execute("INSERT INTO strategy_notes VALUES (?,?,?,?,?) ON CONFLICT(revision_id) DO UPDATE SET "
+                    "favorite=excluded.favorite, tags_json=excluded.tags_json, note=excluded.note, updated_at=excluded.updated_at",
+                    (rid, int(body.favorite), json.dumps(tags), body.note, utc_now_iso()))
+    return {"revision_id": rid, "favorite": body.favorite, "tags": tags, "note": body.note}
+
+
+# ---------------------------------------------------------------- planification
+@app.get(f"{API}/schedules")
+def schedules_list(lab=Depends(L)):
+    out = rows(lab.con.execute("SELECT * FROM schedules ORDER BY created_at DESC"))
+    for r in out:
+        r["payload"] = json.loads(r.pop("payload_json"))
+    return out
+
+
+class ScheduleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: str
+    payload: dict
+    every: str = "once"
+    first_run_utc: str
+
+
+@app.post(f"{API}/schedules")
+def schedules_add(body: ScheduleIn, lab=Depends(L)):
+    from ..tasks import schedules
+    try:
+        return schedules.add(lab.con, body.name, body.kind, body.payload, body.every, body.first_run_utc)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+class Enabled(BaseModel):
+    enabled: bool
+
+
+@app.put(f"{API}/schedules/{{sid}}")
+def schedules_enable(sid: str, body: Enabled, lab=Depends(L)):
+    n = lab.con.execute("UPDATE schedules SET enabled=?, last_error=NULL WHERE id=?", (int(body.enabled), sid)).rowcount
+    if not n:
+        raise HTTPException(404, "planification inconnue")
+    return {"id": sid, "enabled": body.enabled}
+
+
 @app.get(f"{API}/strategy-bases")
 def strategy_bases():
     from ..evolution.operators import BASES
@@ -687,6 +759,11 @@ def worker_loop(root: str, stop: threading.Event) -> None:
     try:
         while not stop.is_set():
             calendar_tick(lab, cal_state)
+            try:
+                from ..tasks import schedules
+                schedules.tick(lab)
+            except Exception as e:
+                lab.log.error("schedules.error", error=repr(e))
             try:
                 t = runner.run_next(lab)
             except Exception as e:  # le worker ne meurt pas sur une erreur inattendue

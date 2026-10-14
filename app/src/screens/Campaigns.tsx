@@ -24,6 +24,7 @@ const DEFAULT_FORM = {
   tribes: ["consistency", "growth", "exploration", "specialization"], specialization_session: "london_kz",
   population: 24, generations_per_tribe: 20, merge_generations: 8, seed: 42, workers: 4,
   sides: "both", spread: "", commission: 0, slippage: 0, min_trades: 30, max_dd_pct: 30, max_ambiguous_ratio: 0.3,
+  auto_validate_top: 5, when: "now", run_at: "", every: "once",
 };
 
 /** Stratégies retenues d'une campagne : front final + révisions ayant franchi au moins le filtrage. */
@@ -85,7 +86,7 @@ export function Campaigns() {
       dataset_version_id: f.dataset_version_id, seed: f.seed, population: f.population,
       generations_per_tribe: f.generations_per_tribe, merge_generations: f.merge_generations, tribes: f.tribes,
       specialization_session: f.specialization_session, workers: f.workers, sides: f.sides, bases: f.bases,
-      seed_revision_ids: seeds ?? [],
+      seed_revision_ids: seeds ?? [], auto_validate_top: f.auto_validate_top,
       context_version_ids: f.ctx ? { [ds.data!.find((d) => d.id === f.ctx).timeframe]: f.ctx } : {},
       constraints: { min_trades: f.min_trades, max_dd_pct: f.max_dd_pct, max_ambiguous_ratio: f.max_ambiguous_ratio },
       cost_profile: {
@@ -94,6 +95,12 @@ export function Campaigns() {
         provenance: { spread: "assumed", commission: "assumed", slippage: "assumed", swap: "symbol_spec" },
       },
     };
+    if (f.when === "later") {
+      if (!f.run_at) throw new Error("choisir la date et l'heure de lancement");
+      const s = await api.post("/schedules", { name: cfg.name, kind: "campaign", payload: cfg, every: f.every, first_run_utc: new Date(f.run_at).toISOString() });
+      go({ screen: "tasks" });
+      return { ...s, scheduled: true };
+    }
     const r = await api.post("/campaigns", { config: cfg });
     // campagnes supplémentaires : mêmes réglages, un dataset par symbole (sans contexte HTF spécifique)
     for (const d of extra) await api.post("/campaigns", { config: { ...cfg, name: `${cfg.name} · ${ds.data!.find((x) => x.id === d)?.canonical_symbol}`, dataset_version_id: d, context_version_ids: {} } });
@@ -148,6 +155,16 @@ export function Campaigns() {
             <Seg label="Effort" value={f.preset} onChange={preset} options={Object.entries(PRESETS).map(([k, p]) => [k, p.label]) as any} />
             <span className="muted">{PRESETS[f.preset]?.hint ?? "réglages personnalisés"}</span>
           </div>
+          <h3>5 · Validation et lancement</h3>
+          <div className="row" style={{ alignItems: "flex-end" }}>
+            <Field label="Valider automatiquement les N meilleures" hint="0 = non ; filtrage → historique → robustesse → hors échantillon">
+              <input type="number" min={0} max={20} value={f.auto_validate_top} onChange={set("auto_validate_top")} /></Field>
+            <Field label="Lancement"><Seg label="Lancement" value={f.when} onChange={(v) => setF({ ...f, when: v })} options={[["now", "Maintenant"], ["later", "Programmer"]]} /></Field>
+            {f.when === "later" && <>
+              <Field label="Date et heure (heure locale)"><input type="datetime-local" value={f.run_at} onChange={set("run_at")} /></Field>
+              <Field label="Répéter"><select value={f.every} onChange={set("every")}><option value="once">une fois</option><option value="daily">chaque jour</option><option value="weekly">chaque semaine</option></select></Field>
+            </>}
+          </div>
           <details style={{ marginTop: 10 }}>
             <summary className="muted" style={{ cursor: "pointer" }}>Options avancées</summary>
             <div className="row" style={{ marginTop: 8 }}>
@@ -181,7 +198,7 @@ export function Campaigns() {
           </details>
           <div className="actions" style={{ marginTop: 12 }}>
             <Btn kind="primary" busy={a.busy} disabled={!f.dataset_version_id || !f.tribes.length || (needSpread && f.spread === "") || (!!seedFrom && seeds == null)} onClick={submit}>
-              Lancer la campagne{extra.length ? ` (+${extra.length})` : ""}</Btn>
+              {f.when === "later" ? "Programmer la campagne" : `Lancer la campagne${extra.length ? ` (+${extra.length})` : ""}`}</Btn>
             <span className="muted">Aucune campagne ne peut envoyer d'ordre.</span>
           </div>
           {a.view}

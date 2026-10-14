@@ -29,6 +29,7 @@ export function Tasks() {
             </span> }]} />
         </Card>
         {detail.data && <Card title={`Tâche ${sel.id}`} wide><Json v={detail.data} /></Card>}
+        <Schedules />
         <Card title="Journal structuré (UTC)" wide>
           <Table rows={logs.data ? [...logs.data].reverse() : null} cols={[{ k: "ts", t: "Horodatage" }, { k: "level", t: "Niveau" }, { k: "event", t: "Événement" },
             { k: "correlation_id", t: "Corrélation" }, { k: "error", t: "Détail", f: (r) => (r.error ?? r.migrations ?? "").toString().slice(0, 120) }]} />
@@ -39,6 +40,26 @@ export function Tasks() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function Schedules() {
+  const s = useApi<any[]>("/schedules", [], true);
+  const a = useAction();
+  const EVERY: Record<string, string> = { once: "une fois", daily: "chaque jour", weekly: "chaque semaine" };
+  return (
+    <Card title="Planifications" wide>
+      {a.view}
+      <Err msg={s.error} />
+      <Table rows={s.data} empty="Aucune planification : programmer une campagne (Campagnes, étape 5) ou une mise à jour quotidienne des données (Données)." cols={[
+        { k: "name", t: "Nom", f: (r) => <b>{r.name}</b> }, { k: "kind", t: "Type", f: (r) => r.kind === "campaign" ? "campagne" : "import MT5" },
+        { k: "every", t: "Récurrence", f: (r) => EVERY[r.every] ?? r.every },
+        { k: "next_run_utc", t: "Prochaine (heure locale)", f: (r) => r.enabled ? new Date(r.next_run_utc).toLocaleString("fr-FR") : "—" },
+        { k: "last_run_utc", t: "Dernière", f: (r) => r.last_run_utc ? new Date(r.last_run_utc).toLocaleString("fr-FR") : "—" },
+        { k: "last_error", t: "Erreur", f: (r) => r.last_error ? <span className="real-off" title={r.last_error}>{r.last_error.slice(0, 60)}</span> : "" },
+        { k: "enabled", t: "Active", f: (r) => <button className="btn" onClick={() => a.run(async () => { await api.put(`/schedules/${r.id}`, { enabled: !r.enabled }); s.reload(); }, () => r.enabled ? "Planification suspendue." : "Planification réactivée.")}>
+          {r.enabled ? "Suspendre" : "Réactiver"}</button> }]} />
+    </Card>
   );
 }
 

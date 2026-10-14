@@ -55,6 +55,7 @@ DEFAULT_CONFIG = {
     "exportable_only": True,  # pénalise (contrainte) les génomes non exportables en MQL5, sans les interdire
     "bases": [],              # bases de stratégie (operators.BASES) mêlées aux génomes aléatoires ; vide = aléatoire seul
     "seed_revision_ids": [],  # stratégies de départ (relance depuis une campagne précédente)
+    "auto_validate_top": 0,   # > 0 : validation complète automatique des N meilleures du front en fin de campagne
 }
 
 
@@ -504,4 +505,19 @@ def run_task(lab, task: dict) -> dict:
     cfg = json.loads(lab.con.execute("SELECT config_json FROM campaigns WHERE id=?", (cid,)).fetchone()[0])
     out = Campaign(lab, task["id"], cid, cfg).run()
     lab.con.execute("UPDATE campaigns SET state=? WHERE id=?", (out.get("stopped", "completed"), cid))
+    if not out.get("stopped") and cfg.get("auto_validate_top"):
+        out["auto_validation"] = submit_validation(lab, cid, cfg, out.get("front") or [], int(cfg["auto_validate_top"]))
     return out
+
+
+def submit_validation(lab, cid: str, cfg: dict, front: list[dict], top: int) -> list[str]:
+    """Soumet la validation complète (filtrage → hors échantillon) des `top` meilleures stratégies du front,
+    classées par Sharpe de validation. Une tâche par stratégie, idempotente."""
+    def key(f):
+        s = (f.get("validation") or {}).get("sharpe")
+        return -s if s is not None else math.inf
+    return [queue.submit(lab.con, "advance", {
+        "revision_id": f["revision_id"], "dataset_version_id": cfg["dataset_version_id"],
+        "context": cfg["context_version_ids"], "cost_profile": cfg["cost_profile"], "campaign_id": cid,
+        "stop_at": "oos_evaluated"}, idempotency_key=f"autoval:{cid}:{f['revision_id']}")
+        for f in sorted(front, key=key)[:top]]

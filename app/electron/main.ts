@@ -1,6 +1,6 @@
 // Processus principal Electron : lance le moteur Python local, relaie l'API via IPC validé.
 // Le renderer n'a ni Node ni accès réseau direct : il ne peut appeler que les chemins /api/v1 autorisés.
-import { app, BrowserWindow, ipcMain, Menu, net, protocol, shell, session } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, net, Notification, protocol, shell, session } from "electron";
 import { pathToFileURL } from "node:url";
 import { spawn, spawnSync, ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -14,6 +14,11 @@ let engine: ChildProcess | null = null;
 let engineLog: string[] = [];
 let win: BrowserWindow | null = null;
 let sseAbort: AbortController | null = null;
+
+// Envoi au renderer sans planter si la fenêtre est déjà détruite (fermeture : le moteur s'arrête après elle).
+function sendToWin(channel: string, payload: unknown) {
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(channel, payload);
+}
 
 // Protocole app:// : sert uniquement les fichiers du renderer empaqueté (origine stable pour la CSP 'self').
 protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: false } }]);
@@ -54,7 +59,7 @@ function startEngine(): Promise<void> {
     engine.stderr?.on("data", (d: Buffer) => { engineLog.push(d.toString()); engineLog = engineLog.slice(-200); });
     engine.on("exit", (code) => {
       clearTimeout(timer);
-      win?.webContents.send("qlab:event", { type: "engine.exited", code, ts: new Date().toISOString() });
+      sendToWin("qlab:event", { type: "engine.exited", code, ts: new Date().toISOString() });
       if (!port) reject(new Error(`moteur arrêté (code ${code}) : ${engineLog.join("").slice(-2000)}`));
     });
   });
@@ -72,6 +77,22 @@ async function apiRequest(method: string, p: string, body?: unknown) {
   const ct = r.headers.get("content-type") || "";
   const data = ct.includes("json") ? await r.json() : await r.text();
   return { status: r.status, data };
+}
+
+// Notification Windows quand une tâche se termine ou échoue (seulement celles mises à jour après le lancement :
+// le flux d'événements rejoue l'historique à la connexion).
+const STARTED = new Date().toISOString();
+const KIND_FR: Record<string, string> = { campaign: "Campagne", advance: "Validation", final_test: "Test final", mt5_verify: "Vérification MT5",
+  import_mt5: "Import MT5", backtest: "Backtest", export: "Export", calendar_refresh: "Calendrier", backup: "Sauvegarde",
+  demo_observe: "Observation démo", engine_experiment: "Expérience moteur" };
+function notify(ev: any) {
+  const t = ev?.task;
+  if (ev?.type !== "task.updated" || !t || !Notification.isSupported() || (t.updated_at ?? "") < STARTED) return;
+  if (!["completed", "failed", "quarantined"].includes(t.state)) return;
+  const n = new Notification({ title: `QLab — ${KIND_FR[t.kind] ?? t.kind} : ${t.state === "completed" ? "terminé" : "échec"}`,
+    body: t.state === "completed" ? "Résultats disponibles dans QLab." : String(t.error ?? "voir Tâches & journaux").slice(0, 180) });
+  n.on("click", () => { win?.show(); win?.focus(); });
+  n.show();
 }
 
 async function pumpEvents() {
@@ -93,7 +114,7 @@ async function pumpEvents() {
           const chunk = buf.slice(0, i);
           buf = buf.slice(i + 2);
           const line = chunk.split("\n").find((l) => l.startsWith("data: "));
-          if (line) win?.webContents.send("qlab:event", JSON.parse(line.slice(6)));
+          if (line) { const ev = JSON.parse(line.slice(6)); notify(ev); sendToWin("qlab:event", ev); }
         }
       }
     } catch {
@@ -157,6 +178,7 @@ function createWindow() {
   win.loadURL("app://bundle/index.html");
 }
 
+app.setAppUserModelId("local.qlab.desktop");  // requis par Windows pour afficher les notifications
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   protocol.handle("app", (req) => {
@@ -188,7 +210,7 @@ app.whenReady().then(async () => {
     if (op === "status") return updater.status();
     if (op === "check") return updater.check();
     if (op === "set-source" && typeof arg === "string" && arg.length < 1024) return updater.setSource(arg);
-    if (op === "download") return updater.download((s) => win?.webContents.send("qlab:event", { type: "update.progress", ...s }));
+    if (op === "download") return updater.download((s) => sendToWin("qlab:event", { type: "update.progress", ...s }));
     if (op === "install") {
       const t = await apiRequest("GET", "/api/v1/tasks");
       const busy = Array.isArray(t.data) ? t.data.filter((x: any) => x.state === "running" || x.state === "validating").length : 0;
@@ -202,16 +224,16 @@ app.whenReady().then(async () => {
   createWindow();
   try {
     await startEngine();
-    win?.webContents.send("qlab:event", { type: "engine.ready", ts: new Date().toISOString() });
+    sendToWin("qlab:event", { type: "engine.ready", ts: new Date().toISOString() });
     pumpEvents();
     // Vérification automatique au démarrage (source configurée uniquement) ; rien n'est téléchargé sans action.
     setTimeout(async () => {
       const s = await updater.check();
-      if (s.available) win?.webContents.send("qlab:event", { type: "update.available", version: s.available.version, ts: new Date().toISOString() });
+      if (s.available) sendToWin("qlab:event", { type: "update.available", version: s.available.version, ts: new Date().toISOString() });
     }, 15_000);
     if (SNAP_DIR) setTimeout(() => snapshots(SNAP_DIR), 3000);
   } catch (err) {
-    win?.webContents.send("qlab:event", { type: "engine.failed", error: String(err), ts: new Date().toISOString() });
+    sendToWin("qlab:event", { type: "engine.failed", error: String(err), ts: new Date().toISOString() });
   }
 });
 

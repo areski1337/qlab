@@ -213,3 +213,14 @@ def test_campaign_with_bases_and_seeds(lab):
     assert {r[0] for r in links} == set(seeds)
     assert all(r[0] == cid2 for r in lab.con.execute(
         "SELECT g.campaign_id FROM genealogy l JOIN genome_revisions g ON g.id=l.child_id WHERE l.operator='reseed'"))
+
+
+def test_auto_validation_submits_top_front(lab):
+    dsv = import_synth(lab)
+    cid, tid, t = run_campaign(lab, small_cfg(dsv, auto_validate_top=2))
+    assert t["state"] == "completed", t["error"]
+    ids = t["result"]["auto_validation"]
+    assert len(ids) == min(2, len(t["result"]["front"]))
+    for i in ids:
+        q = queue.get(lab.con, i)
+        assert q["kind"] == "advance" and q["payload"]["campaign_id"] == cid and q["payload"]["stop_at"] == "oos_evaluated"

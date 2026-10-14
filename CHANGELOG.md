@@ -4,6 +4,11 @@ Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des compos
 
 ## [Non publié]
 ### Ajouté
+- Validation automatique : `auto_validate_top` (défaut 5 dans l'interface) soumet en fin de campagne la validation complète (filtrage → hors échantillon) des N meilleures du front, classées par Sharpe de validation.
+- Éditeur visuel de stratégie (écran Génome) : arbre ET / OU / NON, comparaisons et événements sur tous les indicateurs, sorties, risque et gestion ; validation et description en direct par le moteur ; bascule JSON.
+- Bibliothèque de stratégies : favoris, étiquettes, notes (migration 0008 `strategy_notes`), filtres, comparaison côte à côte de 2 à 4 stratégies (métriques et règles).
+- Planification (migration 0008 `schedules`) : campagnes programmées (une fois / chaque jour / chaque semaine), mise à jour quotidienne des données MT5 ; une planification invalide est suspendue avec son erreur. Notifications Windows à la fin ou en échec d'une tâche.
+- Guide pas à pas : 6 étapes (MT5, données, campagne, validation, parité MT5, démo) cochées d'après l'état réel, avec l'action suivante.
 - Bases de stratégie : suivi de tendance, retour à la moyenne, cassure de range, cassure de session, ICT / Smart Money, repli dans la tendance (paramètres tirés au hasard, 60 % de la population de départ et des immigrants, le reste aléatoire). API `GET /strategy-bases`.
 - Relance d'une campagne depuis les stratégies retenues d'une campagne précédente (front final + statut ≥ filtrée, 40 au plus) : au plus la moitié de chaque tribu, réglages repris, filiation « reseed » conservée ; stratégies devenues invalides sur le nouveau marché écartées.
 - Création de campagne simplifiée : 4 étapes (marché, bases, repartir de, effort), préréglages Rapide / Standard / Approfondie, contexte supérieur choisi automatiquement, spread demandé seulement si les données en manquent, options avancées repliées ; bouton « Relancer » dans la liste et le laboratoire.

@@ -8,6 +8,8 @@ import { GenomeExplorer, Passport, Backtests } from "./screens/Genome";
 import { Mt5 } from "./screens/Mt5";
 import { Portfolio, Demo } from "./screens/Portfolio";
 import { Tasks, Settings } from "./screens/System";
+import { Guide } from "./screens/Guide";
+import { Library } from "./screens/Library";
 import { Personalize } from "./personalize";
 import { PrefsProvider, THEMES, usePrefs } from "./prefs";
 import { Icon, Logo } from "./icons";
@@ -19,10 +21,12 @@ export const useNav = () => useContext(NavCtx);
 
 export const SCREENS: { k: string; label: string; short: string; icon: string; group: string; C: React.FC }[] = [
   { k: "dash", label: "Tableau de bord", short: "Accueil", icon: "dash", group: "Pilotage", C: Dashboard },
+  { k: "guide", label: "Guide pas à pas", short: "Guide", icon: "guide", group: "Pilotage", C: Guide },
   { k: "campaigns", label: "Campagnes", short: "Campagnes", icon: "campaigns", group: "Recherche", C: Campaigns },
   { k: "data", label: "Données & qualité", short: "Données", icon: "data", group: "Recherche", C: Data },
   { k: "lab", label: "Laboratoire génétique", short: "Labo", icon: "lab", group: "Recherche", C: CampaignLab },
   { k: "pareto", label: "Comparaison & Pareto", short: "Pareto", icon: "pareto", group: "Recherche", C: Pareto },
+  { k: "library", label: "Bibliothèque", short: "Bibliothèque", icon: "library", group: "Validation", C: Library },
   { k: "genome", label: "Génome & validation", short: "Génome", icon: "genome", group: "Validation", C: GenomeExplorer },
   { k: "backtests", label: "Backtests & transactions", short: "Backtest", icon: "backtests", group: "Validation", C: Backtests },
   { k: "passport", label: "Passeport", short: "Passeport", icon: "passport", group: "Validation", C: Passport },

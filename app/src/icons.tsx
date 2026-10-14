@@ -26,6 +26,8 @@ const P: Record<string, string> = {
   bolt: "M13 2L4 14h7l-1 8 9-12h-7z",
   shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z",
   update: "M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8M21 4v5h-5M3 20v-5h5",
+  guide: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM15.5 8.5l-2 5-5 2 2-5z",
+  library: "M4 4h4v16H4zM10 4h4v16h-4zM16.5 4.5l3.5 1-4 15-3.5-1z",
   empty: "M3 7l9-4 9 4-9 4zM3 7v10l9 4 9-4V7M12 11v10",
 };
 

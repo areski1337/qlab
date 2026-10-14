@@ -4,6 +4,42 @@ import { Badge, Btn, Card, Err, Field, fmt, Json, PageHead, Seg, signTone, STATU
 import { Bars, EquityChart, Explain, Heatmap, Histogram, PriceChart, Ranges, Stack, Trade } from "../charts";
 import { useNav } from "../main";
 import { LADDER } from "./Dashboard";
+import { EMPTY_GENOME, GenomeEditor, renumber } from "../editor";
+
+/** Création / modification de stratégie : éditeur visuel ou JSON, même brouillon. */
+function StrategyEditor({ current }: { current: any }) {
+  const { nav, go } = useNav();
+  const [mode, setMode] = useState<"visual" | "json">("visual");
+  const [g, setG] = useState<any>(EMPTY_GENOME);
+  const [txt, setTxt] = useState(JSON.stringify(EMPTY_GENOME, null, 2));
+  const [jsonErr, setJsonErr] = useState<string | null>(null);
+  const c = useAction();
+  const load = (x: any) => { setG(x); setTxt(JSON.stringify(x, null, 2)); setJsonErr(null); };
+  const switchMode = (m: "visual" | "json") => {
+    if (m === "visual") { try { setG(JSON.parse(txt)); } catch (e: any) { setJsonErr(`JSON invalide : ${e.message}`); return; } }
+    else setTxt(JSON.stringify(renumber(g), null, 2));
+    setJsonErr(null); setMode(m);
+  };
+  return (
+    <Card title="Créer ou modifier une stratégie" wide actions={<>
+      <Seg label="Mode" value={mode} onChange={switchMode} options={[["visual", "Visuel"], ["json", "JSON"]]} />
+      {current && <button className="btn" onClick={() => load(current.content)}>Partir de la révision ouverte</button>}
+      <button className="btn" onClick={() => load(EMPTY_GENOME)}>Nouvelle stratégie</button>
+    </>}>
+      {mode === "visual" ? <GenomeEditor g={g} onChange={setG} />
+        : <textarea rows={16} style={{ width: "100%" }} value={txt} onChange={(e) => setTxt(e.target.value)} aria-label="Génome JSON" />}
+      <Err msg={jsonErr} />
+      <div className="actions" style={{ marginTop: 10 }}>
+        <Btn kind="primary" busy={c.busy} onClick={() => c.run(async () => {
+          const genome = mode === "visual" ? renumber(g) : JSON.parse(txt);
+          const x = await api.post("/genomes", { genome }); go({ ...nav, rev: x.id }); return x;
+        }, (x) => `Révision ${x.id} créée (immuable) : lancer un backtest ou la validation.`)}>Créer la révision</Btn>
+        <span className="muted">Une révision est immuable : enregistrer une modification crée une nouvelle stratégie, l'originale reste intacte.</span>
+      </div>
+      {c.view}
+    </Card>
+  );
+}
 
 export function RevPicker() {
   const { nav, go } = useNav();
@@ -82,10 +118,8 @@ function Ladder({ status, transitions }: { status: string; transitions: any[] })
 export function GenomeExplorer() {
   const { nav, go } = useNav();
   const r = useApi(nav.rev ? `/genomes/${nav.rev}` : null, [nav.rev], true);
-  const [txt, setTxt] = useState("");
-  const [val, setVal] = useState<any>(null);
   const [ctx, setCtx] = useState<any>({});
-  const a = useAction(), c = useAction(), adv = useAction();
+  const adv = useAction();
   const d = r.data;
   const rob = d?.transitions?.slice().reverse().find((t: any) => t.evidence?.robustness_report)?.evidence.robustness_report;
   const ev = (seg: string) => d?.evaluations?.filter((e: any) => e.segment === seg).at(-1)?.metrics;
@@ -141,19 +175,7 @@ export function GenomeExplorer() {
         </div>
       </>}
       <div className="grid">
-        <Card title="Éditer / créer un génome" wide>
-          <textarea rows={10} style={{ width: "100%" }} value={txt} onChange={(e) => setTxt(e.target.value)}
-            placeholder='Coller un génome JSON (schéma qlab.genome/1.0), ou « Copier » depuis la révision ouverte.' />
-          <div className="actions">
-            {d && <button className="btn" onClick={() => setTxt(JSON.stringify(d.content, null, 2))}>Copier la révision ouverte</button>}
-            <Btn busy={a.busy} onClick={() => a.run(async () => { const x = await api.post("/genomes/validate", { genome: JSON.parse(txt) }); setVal(x); return x; },
-              (x) => x.valid ? "Génome valide." : `${x.errors.length} erreur(s).`)}>Valider</Btn>
-            <Btn kind="primary" busy={c.busy} onClick={() => c.run(async () => { const x = await api.post("/genomes", { genome: JSON.parse(txt) }); go({ ...nav, rev: x.id }); return x; },
-              (x) => `Révision ${x.id} créée (immuable).`)}>Créer la révision</Btn>
-          </div>
-          {a.view}{c.view}
-          {val && !val.valid && <ul>{val.errors.map((e: string, i: number) => <li key={i} className="real-off">{e}</li>)}</ul>}
-        </Card>
+        <StrategyEditor current={d} />
       </div>
     </div>
   );

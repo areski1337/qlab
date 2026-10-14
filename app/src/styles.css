@@ -251,3 +251,28 @@ svg.viz .pt:hover { stroke: var(--fg); stroke-width: 1.5; }
 .swatches button:focus-visible, .themes button:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
 .empty { display: grid; place-items: center; text-align: center; padding: 30px 10px; color: var(--mut); gap: 6px; }
 .empty svg { color: var(--acc); opacity: .7; }
+
+/* ---------------------------------------------------------------- éditeur visuel de stratégie */
+.editor h3 { margin-top: 14px; }
+.side-ed { margin: 6px 0 10px; }
+.node { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; margin: 4px 0; border: 1px solid var(--bd); border-radius: var(--radius); background: var(--panel2); }
+.node.group { display: block; border-left: 3px solid var(--acc); }
+.node.group.d1 { border-left-color: var(--acc2); background: var(--panel); }
+.node .kids { padding-left: 14px; }
+.nodehead { display: inline-flex; gap: 4px; align-items: center; }
+.node.group > .nodehead { margin-bottom: 4px; }
+.ref { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 2px 4px; border-radius: var(--radius); background: color-mix(in srgb, var(--acc) 6%, transparent); }
+.ref .pp { display: inline-flex; gap: 3px; align-items: center; font-size: 11px; color: var(--mut); }
+.ref select, .ref input, .node > select, .node > input, .nodehead select { padding: 2px 5px; font-size: 12px; }
+
+/* ---------------------------------------------------------------- guide */
+.guide { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.guide li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--bd); border-radius: var(--radius); background: var(--panel2); }
+.guide li .body { flex: 1; }
+.guide .mark { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font: 600 13px var(--font-num); border: 2px solid var(--bd); color: var(--mut); flex: none; }
+.guide li.ok .mark { border-color: var(--ok); color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.guide li.next { border-color: var(--acc); box-shadow: var(--glow); }
+.guide li.next .mark { border-color: var(--acc); color: var(--acc); }
+
+a { color: var(--acc); }
+a:hover { text-decoration: underline; }
