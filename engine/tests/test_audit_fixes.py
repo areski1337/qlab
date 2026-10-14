@@ -209,3 +209,131 @@ def test_guard_halt_file(env, tmp_path, monkeypatch):
     assert st["12345"]["halted"] and st["12345"]["peak_equity"] == 1000 and st["678"]["halted"]
     assert monitor.reset_guard(lab, "12345", "test")["reset"]
     assert not list(d.glob("guard_12345.*"))
+
+
+# F-TRAD-013 : la décision OOS porte sur le R net ; une commission élevée annule un avantage brut significatif
+def test_oos_decision_uses_net_r(env, monkeypatch):
+    lab, bars, cache, rev = env
+    risk_amount, commission = 100.0, 45.0  # commission = 0,45 R par trade
+    gross_r = [1.5 if i % 2 else -0.5 for i in range(40)]  # R brut moyen 0,5 : significatif seul
+    trades = [{"r": r, "pnl": r * risk_amount - commission, "risk_amount": risk_amount} for r in gross_r]
+    pnls = [t["pnl"] for t in trades]
+    metrics = {"n_trades": 40, "expectancy": sum(pnls) / 40,  # net encore positif : seuils de base satisfaits
+               "profit_factor": sum(p for p in pnls if p > 0) / -sum(p for p in pnls if p < 0)}
+    assert metrics["expectancy"] > 0 and metrics["profit_factor"] > 1
+    assert pipeline.oos_decision(metrics, gross_r, 1)["pass"]  # sur le R brut, la stratégie serait admise
+
+    def fake_evaluate(lab_, rev_, cache_, costs, risk, segment, *a, **k):
+        assert segment == "oos"
+        return {"id": "eval_fixture", "metrics": metrics, "trades_artifact": None, "result": {"trades": trades}}
+    monkeypatch.setattr(proto, "evaluate", fake_evaluate)
+    for s in ("screened", "historically_tested", "robustness_tested"):
+        gstore.set_status(lab.con, rev["id"], s, {"fixture": True}, {"test": s})
+    out = pipeline.advance(lab, rev["id"], cache, COSTS, RiskController(DEFAULT_LIMITS))
+    assert out["status"] == "rejected" and "non significatif" in out["log"][-1]["reason"]
+    dec = gstore.transitions(lab.con, rev["id"])[-1]["evidence"]["oos_test"]
+    assert dec["base_pass"] and dec["p_value"] > dec["alpha_effective"]
+
+
+# F-TRAD-017 : le transfert suit les frontières datées figées de la série, pas les fractions de la version fournie
+def test_transfer_uses_frozen_dated_boundaries(env):
+    lab, bars, cache, rev = env
+    proto.segments_for(lab, bars)  # fige les frontières sur la version de 30 000 barres
+    v2 = dataset.load_bars(lab, _import(lab, 36000)["id"])  # ré-import plus long de la même série
+    c2 = FeatureCache(v2)
+    dated_end = proto.segments_for(lab, v2)["validation"][1]  # frontières déjà figées : relues, non refigées
+    frac_end = proto.segments(len(v2))["validation"][1]
+    assert dated_end < frac_end
+    risk = RiskController(DEFAULT_LIMITS)
+    g = rev["content"]
+    expected = robustness._summ(robustness._run(g, c2, COSTS, risk, (0, dated_end))[1])
+    by_fractions = robustness._summ(robustness._run(g, c2, COSTS, risk, (0, frac_end))[1])
+    assert expected["n_trades"] != by_fractions["n_trades"]  # les deux fenêtres sont distinguables
+    out = robustness.transfer(g, {"SYNTH": c2}, COSTS, risk, proto.DEFAULT_PROTOCOL, lab)["SYNTH"]
+    assert out["n_trades"] == expected["n_trades"]
+    assert out["net_profit"] == pytest.approx(expected["net_profit"])
+    assert lab.con.execute("SELECT COUNT(*) FROM segment_boundaries").fetchone()[0] == 1  # rien de figé en plus
+
+
+# F-CODE-004 : la pause ou l'annulation de l'expérience parente arrête la campagne enfant
+def test_campaign_stops_when_parent_task_paused(env):
+    from qlab.evolution import campaign
+    from qlab.tasks import queue
+    lab, bars, cache, rev = env
+    parent = queue.submit(lab.con, "experiment", {"fixture": True})
+    for s in ("validating", "running"):
+        queue.transition(lab.con, parent, s)
+    cid, tid = campaign.create(lab, {"dataset_version_id": bars.version_id, "cost_profile": COSTS,
+                                     "parent_task_id": parent})
+    for s in ("validating", "running"):
+        queue.transition(lab.con, tid, s)
+    cfg = json.loads(lab.con.execute("SELECT config_json FROM campaigns WHERE id=?", (cid,)).fetchone()[0])
+    camp = campaign.Campaign(lab, tid, cid, cfg)
+    assert camp.stop_state() is None  # parent et enfant actifs
+    queue.transition(lab.con, parent, "paused")
+    assert queue.get(lab.con, tid)["state"] == "running"
+    assert camp.stop_state() == "paused"
+    queue.transition(lab.con, parent, "cancelled")
+    assert camp.stop_state() == "cancelled"
+
+
+# F-PROD-003 : le passeport expose le N de la série (essais du Sharpe dégonflé du rapport de robustesse)
+def test_passport_series_trials_from_robustness_report(env):
+    from qlab.passport import build as passport
+    lab, bars, cache, rev = env
+    risk = RiskController(DEFAULT_LIMITS)
+    rev2 = gstore.create_revision(lab.con, _genome("valid_regime_trend.json") | {"market": {"symbol": "SYNTH", "timeframe": "M5"}})
+    rev3 = gstore.create_revision(lab.con, {**_genome(), "management": {**_genome()["management"], "cooldown_bars": 3}})
+    for r in (rev, rev2, rev3):
+        proto.evaluate(lab, r, cache, COSTS, risk, "train")
+    trials = robustness.trial_sharpes(lab, bars.version_id)
+    assert len(trials) == 3
+    rep = {"checks": {}, "deflated_sharpe": robustness.deflated_sharpe(trials[0], 250, 0.0, 3.0, trials)}
+    n_trials = rep["deflated_sharpe"]["n_trials"]
+    assert n_trials >= 2
+    sha = lab.store.put_json(rep, kind="robustness_report", meta={"revision": rev["id"]})
+    for s in ("screened", "historically_tested"):
+        gstore.set_status(lab.con, rev["id"], s, {"fixture": True}, {"test": s})
+    gstore.set_status(lab.con, rev["id"], "robustness_tested", {"fixture": True}, {"robustness_report": sha})
+    p = passport.build(lab, rev["id"])
+    assert p["observations"]["multiplicity"]["series_trials"] == n_trials
+    assert p["observations"]["multiplicity"]["campaign_candidates"] is None  # hors campagne : seul N de série
+    assert any(f"{n_trials} stratégie(s) essayée(s)" in s for s in p["interpretations"])
+
+
+# F-TRAD-016 : un portefeuille manuel exige des révisions >= oos_evaluated (409) ; le holdout final est refusé (403)
+def test_portfolio_api_requires_oos_and_refuses_final(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from qlab.api import app as api
+    token = "t" * 32
+    lab = Lab.open(tmp_path / "api")
+    ok = gstore.create_revision(lab.con, _genome())
+    raw = gstore.create_revision(lab.con, _genome("valid_regime_trend.json") | {"market": {"symbol": "SYNTH", "timeframe": "M5"}})
+    for s in ("screened", "historically_tested", "robustness_tested", "oos_evaluated"):
+        gstore.set_status(lab.con, ok["id"], s, {"fixture": True}, {"test": s})
+    gstore.set_status(lab.con, raw["id"], "screened", {"fixture": True}, {"test": "screened"})
+    monkeypatch.setitem(api.STATE, "root", str(lab.paths.root))
+    monkeypatch.setitem(api.STATE, "token", token)
+    lab.close()
+    c = TestClient(api.app, headers={"X-QLab-Token": token})
+    r = c.post("/api/v1/portfolios", json={"revision_ids": [ok["id"], raw["id"]]})
+    assert r.status_code == 409
+    assert raw["id"] in r.json()["detail"] and ok["id"] not in r.json()["detail"]  # seule la révision non validée
+    r = c.post("/api/v1/portfolios", json={"revision_ids": [ok["id"], raw["id"]], "segment": "final"})
+    assert r.status_code == 403
+
+
+# F-TRAD-015 : l'EA crée guard_<login>.halt et ne le supprime jamais (levée manuelle seulement)
+def test_ea_guard_halt_file_never_deleted():
+    import re
+    from qlab.genome import model
+    from qlab.mql5 import generator
+    g = json.loads((EX / "valid_ict_fvg_killzone.json").read_text(encoding="utf-8"))
+    rev = {"id": "rev_test", "content": g, "semantic_hash": model.semantic_hash(g)}
+    src = generator.generate(rev, "XAUUSD", "NY+7", DEFAULT_LIMITS, RiskController(DEFAULT_LIMITS).limits_sha256)["source"]
+    assert re.search(r'QL_GuardHaltFile\(\)\s*\{\s*return\s*"QLab\\\\guard_"\s*\+\s*'
+                     r'IntegerToString\(AccountInfoInteger\(ACCOUNT_LOGIN\)\)\s*\+\s*"\.halt"', src)
+    assert re.search(r"FileOpen\(QL_GuardHaltFile\(\),\s*FILE_WRITE", src)  # créé par l'EA à l'arrêt
+    assert re.search(r"halted\s*=\s*FileIsExist\(QL_GuardHaltFile\(\)", src)  # sa présence vaut arrêt
+    for call in re.findall(r"\b(?:FileDelete|FileMove)\s*\(([^;]*)", src):
+        assert "halt" not in call.lower(), call  # ni supprimé ni déplacé par l'EA
