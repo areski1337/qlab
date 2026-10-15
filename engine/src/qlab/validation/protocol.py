@@ -127,6 +127,9 @@ def store(lab, key: str, rev_id: str, cache, costs: dict, risk, segment: str, wi
     if result is not None and (store_trades or segment == "final"):
         trades_sha = lab.store.put_json({"trades": result["trades"], "skipped": result["skipped"]}, kind="trades",
                                         meta={"revision": rev_id, "segment": segment})
+    # profil de coûts conservé en clair : chaque évaluation peut afficher ses hypothèses de spread/commission/glissement
+    lab.con.execute("INSERT OR IGNORE INTO cost_profiles VALUES (?,?,?)",
+                    (sha256_json(costs), json.dumps(costs, sort_keys=True), utc_now_iso()))
     # INSERT OR IGNORE + clé unique : une reprise ne duplique jamais une évaluation (AT-004).
     lab.con.execute("INSERT OR IGNORE INTO evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
         new_id("eval"), key, rev_id, campaign_id, cache.bars.version_id,

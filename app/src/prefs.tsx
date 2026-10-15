@@ -12,13 +12,14 @@ export type Prefs = {
   magnet: boolean;
   activity: boolean;              // panneau d'activité à droite
   motion: boolean;
+  explain: boolean;               // encadrés « comment lire ce graphique »
   favorites: string[];            // écrans épinglés dans la barre du haut
   start: string;                  // écran au lancement
 };
 
 export const DEFAULT_PREFS: Prefs = {
-  theme: "nocturne", accent: null, candles: "aurore", density: "normal", rail: "libelles", chartType: "candles",
-  grid: true, magnet: true, activity: true, motion: true, favorites: ["dash", "lab", "backtests", "genome"], start: "dash",
+  theme: "nocturne", accent: null, candles: "aurore", density: "compact", rail: "libelles", chartType: "candles",
+  grid: true, magnet: true, activity: true, motion: true, explain: false, favorites: ["dash", "lab", "backtests", "genome"], start: "dash",
 };
 
 export const THEMES: { id: Prefs["theme"]; name: string; hint: string; sw: string[] }[] = [

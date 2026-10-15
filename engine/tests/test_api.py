@@ -76,6 +76,14 @@ def test_end_to_end_via_api(client):
     assert r["state"] == "completed", r["error"]
     detail = c.get(f"/api/v1/genomes/{rev['id']}").json()
     assert detail["evaluations"] and detail["description"]["marché"].startswith("SYNTH_XAU")
+    # hypothèses de coûts restituées en clair avec l'évaluation
+    assert detail["evaluations"][-1]["cost_profile"]["fixed_spread_points"] == 30
+    # barres : deuxième lecture servie par le cache (même objet vérifié), contenu identique
+    b1 = c.get(f"/api/v1/datasets/{vid}/bars?start=-100&limit=100").json()
+    n_cache = len(api._BARS)
+    b2 = c.get(f"/api/v1/datasets/{vid}/bars?start=-100&limit=100").json()
+    assert b1 == b2 and len(api._BARS) == n_cache >= 1
+    assert c.get("/api/v1/datasets/dsv_inconnu/bars").status_code == 404
     assert "garantie" in c.get(f"/api/v1/genomes/{rev['id']}/passport.html").text
 
     cfg = {"dataset_version_id": vid, "population": 6, "generations_per_tribe": 1, "merge_generations": 1,

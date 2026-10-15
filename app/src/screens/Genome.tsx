@@ -4,6 +4,7 @@ import { Badge, Btn, Card, Err, Field, fmt, Json, PageHead, Seg, signTone, STATU
 import { Bars, EquityChart, Explain, Heatmap, Histogram, PriceChart, Ranges, Stack, Trade } from "../charts";
 import { useNav } from "../main";
 import { LADDER } from "./Dashboard";
+import { PerfReport } from "../report";
 import { EMPTY_GENOME, GenomeEditor, renumber } from "../editor";
 
 /** Création / modification de stratégie : éditeur visuel ou JSON, même brouillon. */
@@ -71,31 +72,65 @@ export function RevList() {
   );
 }
 
-export function DatasetCtx({ value, onChange }: { value: any; onChange: (v: any) => void }) {
+/** Marché et hypothèses de coûts d'une évaluation. `fromCampaign` : préremplit dataset, contexte et coûts avec ceux de la
+ * campagne d'origine, pour valider une stratégie dans les conditions où elle a été trouvée. */
+export function DatasetCtx({ value, onChange, fromCampaign }: { value: any; onChange: (v: any) => void; fromCampaign?: string | null }) {
   const ds = useApi<any[]>("/datasets");
   const base = ds.data?.find((d) => d.id === value.dataset_version_id);
+  useEffect(() => {
+    if (!fromCampaign || value.dataset_version_id) return;
+    api.get(`/campaigns/${fromCampaign}`).then((c: any) => {
+      const k = c.config, cp = k.cost_profile ?? {};
+      onChange({ dataset_version_id: k.dataset_version_id, context: Object.fromEntries(Object.entries(k.context_version_ids ?? {})),
+        mode: cp.spread_mode ?? "max", spread: cp.fixed_spread_points ?? "", commission: cp.commission_per_lot_side ?? 0,
+        slippage: cp.slippage_points ?? 0, swap: cp.apply_swap ?? true, baseCost: cp, from: c.name });
+    }).catch(() => undefined);
+  }, [fromCampaign]);
+  const set = (k: string, v: any) => onChange({ ...value, [k]: v });
+  const zero = (base?.qc?.zero_spread_ratio ?? 0) > 0;
+  const needSpread = (value.mode ?? "max") === "fixed" || (zero && (value.mode ?? "max") !== "bars");
   return (
-    <div className="row">
-      <Field label="Dataset">
-        <select value={value.dataset_version_id ?? ""} onChange={(e) => onChange({ ...value, dataset_version_id: e.target.value, context: {} })}>
-          <option value="">— choisir —</option>
-          {ds.data?.map((d) => <option key={d.id} value={d.id}>{d.canonical_symbol} {d.timeframe} v{d.version}{d.synthetic ? " [SYNTH]" : ""}</option>)}
-        </select>
-      </Field>
-      {ds.data?.filter((d) => base && d.canonical_symbol === base.canonical_symbol && d.timeframe !== base.timeframe).map((d) => (
-        <label key={d.id}><input type="checkbox" checked={value.context?.[d.timeframe] === d.id}
-          onChange={(e) => { const c = { ...(value.context ?? {}) }; if (e.target.checked) c[d.timeframe] = d.id; else delete c[d.timeframe]; onChange({ ...value, context: c }); }} /> contexte {d.timeframe}</label>))}
-      <Field label="Spread fixe/plancher (points)"><input type="number" value={value.spread ?? ""} onChange={(e) => onChange({ ...value, spread: e.target.value })} /></Field>
-      <Field label="Commission/lot/côté"><input type="number" step="0.01" value={value.commission ?? 0} onChange={(e) => onChange({ ...value, commission: Number(e.target.value) })} /></Field>
-    </div>
+    <>
+      <div className="row">
+        <Field label="Dataset">
+          <select value={value.dataset_version_id ?? ""} onChange={(e) => onChange({ ...value, dataset_version_id: e.target.value, context: {} })}>
+            <option value="">— choisir —</option>
+            {ds.data?.map((d) => <option key={d.id} value={d.id}>{d.canonical_symbol} {d.timeframe} v{d.version}{d.synthetic ? " [SYNTH]" : ""}</option>)}
+          </select>
+        </Field>
+        {ds.data?.filter((d) => base && d.canonical_symbol === base.canonical_symbol && d.timeframe !== base.timeframe).map((d) => (
+          <label key={d.id}><input type="checkbox" checked={value.context?.[d.timeframe] === d.id}
+            onChange={(e) => { const c = { ...(value.context ?? {}) }; if (e.target.checked) c[d.timeframe] = d.id; else delete c[d.timeframe]; onChange({ ...value, context: c }); }} /> contexte {d.timeframe}</label>))}
+      </div>
+      <div className="row">
+        <Field label="Spread" hint={zero ? `spread historique nul sur ${fmt(base.qc.zero_spread_ratio * 100, 1)} % des barres` : undefined}>
+          <select value={value.mode ?? "max"} onChange={(e) => set("mode", e.target.value)}>
+            <option value="max">max(historique, plancher)</option><option value="bars">historique seul</option><option value="fixed">fixe</option>
+          </select></Field>
+        <Field label={(value.mode ?? "max") === "fixed" ? "Spread fixe (points)" : "Plancher (points)"}>
+          <input type="number" min={0} value={value.spread ?? ""} onChange={(e) => set("spread", e.target.value)} aria-invalid={needSpread && value.spread === ""} /></Field>
+        <Field label="Commission / lot / côté"><input type="number" min={0} step="0.01" value={value.commission ?? 0} onChange={(e) => set("commission", Number(e.target.value))} /></Field>
+        <Field label="Glissement (points / exécution)"><input type="number" min={0} value={value.slippage ?? 0} onChange={(e) => set("slippage", Number(e.target.value))} /></Field>
+        <label><input type="checkbox" checked={value.swap ?? true} onChange={(e) => set("swap", e.target.checked)} /> swap (spécification du symbole)</label>
+      </div>
+      {value.from && <p className="muted">Conditions reprises de la campagne « {value.from} ».</p>}
+      {needSpread && (value.spread === "" || value.spread == null) && <div className="alert warn">Spread requis : les données n'en fournissent pas sur toutes les barres (l'évaluation serait refusée).</div>}
+    </>
   );
 }
 
+/** Profil de coûts envoyé au moteur ; provenance « assumed » pour toute valeur saisie (jamais présentée comme observée). */
 export const costOf = (v: any) => ({
-  name: "ui", version: 1, spread_mode: "max", fixed_spread_points: v.spread === "" || v.spread == null ? null : Number(v.spread),
-  commission_per_lot_side: v.commission ?? 0, slippage_points: 0, apply_swap: true,
-  provenance: { spread: "assumed", commission: "assumed", slippage: "assumed", swap: "symbol_spec" },
+  ...(v.baseCost ?? {}), name: v.baseCost?.name ?? "ui", version: v.baseCost?.version ?? 1,
+  spread_mode: v.mode ?? "max", fixed_spread_points: v.spread === "" || v.spread == null ? null : Number(v.spread),
+  commission_per_lot_side: v.commission ?? 0, slippage_points: v.slippage ?? 0, apply_swap: v.swap ?? true,
+  provenance: {
+    // une valeur modifiée par rapport à la campagne perd sa provenance d'origine : elle devient une hypothèse
+    spread: same(v, "fixed_spread_points", v.spread === "" || v.spread == null ? null : Number(v.spread)) && same(v, "spread_mode", v.mode ?? "max") ? v.baseCost.provenance?.spread ?? "assumed" : "assumed",
+    commission: same(v, "commission_per_lot_side", v.commission ?? 0) ? v.baseCost.provenance?.commission ?? "assumed" : "assumed",
+    slippage: same(v, "slippage_points", v.slippage ?? 0) ? v.baseCost.provenance?.slippage ?? "assumed" : "assumed", swap: "symbol_spec" },
 });
+const same = (v: any, k: string, x: any) => !!v.baseCost && v.baseCost[k] === x;
 
 /** Échelle de validation : étapes franchies, étape courante, rejet. */
 function Ladder({ status, transitions }: { status: string; transitions: any[] }) {
@@ -161,7 +196,7 @@ export function GenomeExplorer() {
           {rob && <Robustness sha={rob} />}
           <Card title="Faire progresser la validation" wide>
             <p className="muted">Filtrage → historique → robustesse → hors échantillon. Chaque étape exige des preuves ; un échec rejette la révision (preuve conservée).</p>
-            <DatasetCtx value={ctx} onChange={setCtx} />
+            <DatasetCtx value={ctx} onChange={setCtx} fromCampaign={d.campaign_id} />
             <Btn kind="primary" busy={adv.busy} disabled={!ctx.dataset_version_id} onClick={() => adv.run(() => api.post(`/genomes/${d.id}/advance`, {
               dataset_version_id: ctx.dataset_version_id, context: ctx.context ?? {}, cost_profile: costOf(ctx), campaign_id: d.campaign_id,
             }), (x) => `Validation soumise (tâche ${x.task_id}).`)}>Lancer la validation</Btn>
@@ -245,7 +280,7 @@ function Robustness({ sha }: { sha: string }) {
           { label: "Drawdown max", p5: mc.bootstrap_max_dd_pct.p5, p50: mc.bootstrap_max_dd_pct.p50, p95: mc.bootstrap_max_dd_pct.p95, thr: crit.mc_p95_max_dd_pct, unit: "%" },
           { label: "DD (ordre permuté)", p5: mc.permutation_max_dd_pct.p5, p50: mc.permutation_max_dd_pct.p50, p95: mc.permutation_max_dd_pct.p95, thr: crit.mc_p95_max_dd_pct, unit: "%" },
         ]} />
-        <Explain>Les trades sont rejoués dans un ordre aléatoire (avec remise) 1 000 fois. La bande va du 5<sup>e</sup> au 95<sup>e</sup> centile, le trait = médiane, le point = résultat réel. Probabilité de finir en perte : <b>{fmt(mc.prob_net_negative * 100, 1)} %</b>. Hypothèse : trades indépendants.</Explain>
+        <Explain always>Les trades sont rejoués dans un ordre aléatoire (avec remise) 1 000 fois. La bande va du 5<sup>e</sup> au 95<sup>e</sup> centile, le trait = médiane, le point = résultat réel. Probabilité de finir en perte : <b>{fmt(mc.prob_net_negative * 100, 1)} %</b>. Hypothèse : trades indépendants.</Explain>
       </Card>}
       {rb?.available && <Card title="Contre des entrées aléatoires">
         <Ranges rows={[{ label: "Espérance / trade", p5: rb.random_expectancy_p50, p50: rb.random_expectancy_p50, p95: rb.random_expectancy_p95, actual: rb.strategy_expectancy, unit: "devise / trade" }]} />
@@ -271,7 +306,7 @@ function Robustness({ sha }: { sha: string }) {
         <Table rows={Object.entries(rep.transfer).map(([s, v]: any) => ({ id: s, s, ...v }))} cols={[{ k: "s", t: "Instrument" },
           { k: "n_trades", t: "Trades", num: true }, { k: "net_profit", t: "Net", num: true, tone: true }, { k: "sharpe", t: "Sharpe", num: true, tone: true },
           { k: "profit_factor", t: "PF", num: true }, { k: "max_dd_pct", t: "DD %", num: true }, { k: "error", t: "Erreur" }]} />
-        <Explain>Informatif : les mêmes règles appliquées tel quel à d'autres marchés. Un transfert positif renforce la confiance ; son absence n'invalide pas une stratégie spécialisée.</Explain>
+        <Explain always>Informatif : les mêmes règles appliquées tel quel à d'autres marchés. Un transfert positif renforce la confiance ; son absence n'invalide pas une stratégie spécialisée.</Explain>
       </Card>}
     </>
   );
@@ -366,13 +401,14 @@ export function Backtests() {
           {!evalSel.trades_artifact ? <p className="muted">Transactions non conservées pour cette évaluation (relancer avec conservation).</p>
             : view === "equity" ? <>
               <EquityChart trades={tr} initial={m?.initial_equity ?? 10000} height={380} />
-              <Explain>Haut : capital après chaque trade clôturé, <b>vert au-dessus</b> du capital initial, <b>rouge en dessous</b>. Bas : « sous l'eau » = distance au dernier sommet. Les longues zones rouges en bas sont les périodes difficiles à traverser psychologiquement.</Explain>
+              <Explain always>Capital de clôture par trade (référence : capital initial) ; volet inférieur : drawdown en % du dernier sommet. Courbe par trade, pas mark-to-market : la perte latente intra-trade n'apparaît pas.</Explain>
             </> : <>
               <Err msg={bars.error} />
               {bars.data && <PriceChart bars={bars.data as any} trades={tr} height={420} />}
-              <Explain>Flèches = entrées (▲ long, ▼ short) ; ronds = sorties, annotées du résultat en R (multiple du risque initial). {span < (w ? w[1] - w[0] : 0) ? `Seules les ${fmt(span, 0)} dernières barres de la période sont affichées.` : ""}</Explain>
+              <Explain always>Flèches = entrées (▲ long, ▼ short) ; ronds = sorties, annotées du résultat en R (multiple du risque initial). {span < (w ? w[1] - w[0] : 0) ? `Seules les ${fmt(span, 0)} dernières barres de la période sont affichées.` : ""}</Explain>
             </>}
         </Card>
+        <PerfReport ev={evalSel} trades={tr} />
         {tr.length > 0 && <>
           <Card title="Distribution des résultats (R)">
             <Histogram values={tr.map((t) => t.r ?? NaN)} unit="R" marks={[{ v: 0, label: "0" }, { v: m?.expectancy_r ?? NaN, label: "moyenne" }]} />
@@ -400,7 +436,7 @@ export function Backtests() {
         </>}
       </div>}
       {nav.rev && <div className="grid"><Card title="Lancer un backtest (moteur de référence)" wide>
-        <DatasetCtx value={ctx} onChange={setCtx} />
+        <DatasetCtx value={ctx} onChange={setCtx} fromCampaign={(r.data as any)?.campaign_id} />
         <div className="row" style={{ alignItems: "center" }}>
           <Field label="Segment"><select value={seg} onChange={(e) => setSeg(e.target.value)}>
             <option value="research">entraînement + validation</option><option value="train">entraînement</option>

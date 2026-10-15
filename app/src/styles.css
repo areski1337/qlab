@@ -276,3 +276,21 @@ svg.viz .pt:hover { stroke: var(--fg); stroke-width: 1.5; }
 
 a { color: var(--acc); }
 a:hover { text-decoration: underline; }
+
+/* en-têtes triables au clavier, pagination */
+th > .th { all: unset; cursor: pointer; display: block; width: 100%; }
+th.num > .th { text-align: right; }
+th > .th:focus-visible, tr.click:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+.pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 6px 0 0; font-size: 12px; }
+
+/* rapport de performance : métriques avec définition dépliable au survol */
+.report { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 6px 22px; }
+.report h3 { margin-top: 4px; }
+.kv.metrics { grid-template-columns: 1fr auto; row-gap: 2px; }
+.kv.metrics dt { position: relative; cursor: help; border-bottom: 1px dotted transparent; }
+.kv.metrics dt:hover { border-bottom-color: var(--mut); }
+.kv.metrics dt .def { display: none; position: absolute; left: 0; top: 100%; z-index: 5; width: 300px; padding: 6px 8px; font-size: 11px; line-height: 1.4;
+  color: var(--fg); background: var(--panel2); border: 1px solid var(--bd); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.kv.metrics dt:hover .def { display: block; }
+.kv.metrics dd { text-align: right; }
+.kv.metrics dd.pos { color: var(--up); } .kv.metrics dd.neg { color: var(--down); }

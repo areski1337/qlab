@@ -40,7 +40,7 @@ async function retainedOf(cid: string): Promise<string[]> {
 export function Campaigns() {
   const { nav, go } = useNav();
   const ds = useApi<any[]>("/datasets", [], true);
-  const camps = useApi<any[]>("/campaigns", [], true);
+  const camps = useApi<any[]>("/campaigns", [], "progress");
   const bases = useApi<any[]>("/strategy-bases");
   const a = useAction();
   const [extra, setExtra] = useState<string[]>([]);
@@ -240,7 +240,7 @@ function CampaignPicker() {
 
 export function CampaignLab() {
   const { nav, go } = useNav();
-  const c = useApi(nav.campaign ? `/campaigns/${nav.campaign}` : null, [nav.campaign], true);
+  const c = useApi(nav.campaign ? `/campaigns/${nav.campaign}` : null, [nav.campaign], "progress");
   const a = useAction();
   const [norm, setNorm] = useState<"abs" | "norm">("abs");
   const d = c.data;
@@ -294,7 +294,7 @@ export function CampaignLab() {
               const lo = Math.min(...ys), hi = Math.max(...ys);
               return { name: TRIBE_FR[t] ?? t, pts: byTribe[t].map((h, i) => ({ x: h.gen ?? i, y: h.best_obj == null ? NaN : norm === "norm" ? (hi > lo ? (h.best_obj - lo) / (hi - lo) : 1) : h.best_obj })) };
             })} height={260} />
-            <Explain>Chaque courbe = <b>meilleur objectif principal</b> parmi les stratégies faisables d'une tribu, génération après génération. Une courbe qui monte puis s'aplatit = convergence ; un plateau long déclenche les mécanismes anti-stagnation. Les objectifs diffèrent selon la tribu : la vue « normalisée » compare les dynamiques. Le meilleur score observé est biaisé à la hausse : seule la validation tranche.</Explain>
+            <Explain always>Chaque courbe = <b>meilleur objectif principal</b> parmi les stratégies faisables d'une tribu, génération après génération. Une courbe qui monte puis s'aplatit = convergence ; un plateau long déclenche les mécanismes anti-stagnation. Les objectifs diffèrent selon la tribu : la vue « normalisée » compare les dynamiques. Le meilleur score observé est biaisé à la hausse : seule la validation tranche.</Explain>
           </Card>
           <Card title="Diversité des tribus (dernière génération)">
             <Bars unit="indice" items={tribes.flatMap((t) => [

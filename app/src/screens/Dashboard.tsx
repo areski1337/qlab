@@ -9,8 +9,8 @@ export function Dashboard() {
   const { go } = useNav();
   const h = useApi("/health", [], true);
   const st = useApi("/stats", [], true);
-  const tasks = useApi<any[]>("/tasks", [], true);
-  const camps = useApi<any[]>("/campaigns", [], true);
+  const tasks = useApi<any[]>("/tasks", [], "progress");
+  const camps = useApi<any[]>("/campaigns", [], "progress");
   const s = st.data;
   const by: Record<string, number> = s?.revisions_by_status ?? {};
   const total = Object.values(by).reduce((a, b) => a + (b as number), 0);

@@ -59,6 +59,7 @@ export function Personalize({ onClose }: { onClose: () => void }) {
             <div className="row" style={{ alignItems: "center", marginTop: 8 }}>
               <label><input type="checkbox" checked={p.activity} onChange={(e) => set({ activity: e.target.checked })} /> Panneau d'activité</label>
               <label><input type="checkbox" checked={p.motion} onChange={(e) => set({ motion: e.target.checked })} /> Animations</label>
+              <label><input type="checkbox" checked={p.explain} onChange={(e) => set({ explain: e.target.checked })} /> Encadrés de lecture des graphiques</label>
             </div>
           </section>
           <section>

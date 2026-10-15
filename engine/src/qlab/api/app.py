@@ -226,9 +226,25 @@ def import_synth(body: Synth, lab=Depends(L)):
     return submit(lab, "import_synthetic", body.model_dump())
 
 
+_BARS: dict = {}  # cache des versions de dataset déjà vérifiées (immuables) : évite relecture + ré-hachage complet
+
+
+def _bars(lab, vid: str):
+    f = lab.con.execute("SELECT file_relpath FROM dataset_versions WHERE id=?", (vid,)).fetchone()
+    if f is None:
+        raise HTTPException(404, "dataset inconnu")
+    st = (lab.paths.root / f[0]).stat()
+    key = (str(lab.paths.root), vid, st.st_mtime_ns, st.st_size)  # fichier modifié = nouvelle lecture vérifiée
+    if key not in _BARS:
+        while len(_BARS) >= 3:  # mémoire bornée : quelques séries à la fois (une série M1 pèse ~100 Mo)
+            _BARS.pop(next(iter(_BARS)))
+        _BARS[key] = dataset.load_bars(lab, vid)
+    return _BARS[key]
+
+
 @app.get(f"{API}/datasets/{{vid}}/bars")
 def bars(vid: str, start: int = 0, limit: int = 2000, lab=Depends(L)):
-    b = dataset.load_bars(lab, vid)
+    b = _bars(lab, vid)
     s = max(0, start if start >= 0 else len(b) + start)
     sl = b.slice(s, min(len(b), s + min(limit, 20000)))
     return {"n_total": len(b), "start": s, "synthetic": b.synthetic, "symbol": b.symbol, "timeframe": b.timeframe,
@@ -365,11 +381,14 @@ def genome(rid: str, lab=Depends(L)):
     r["description"] = model.describe(r["content"])
     r["lineage"] = gstore.lineage(lab.con, rid)
     r["transitions"] = gstore.transitions(lab.con, rid)
-    r["evaluations"] = rows(lab.con.execute("SELECT id, segment, window_json, metrics_json, dataset_version_id, "
+    r["evaluations"] = rows(lab.con.execute("SELECT id, segment, window_json, metrics_json, dataset_version_id, cost_profile_sha256, "
                                             "trades_artifact, created_at FROM evaluations WHERE revision_id=? "
                                             "ORDER BY created_at", (rid,)))
+    profiles = {k: json.loads(v) for k, v in lab.con.execute(
+        "SELECT sha256, profile_json FROM cost_profiles WHERE sha256 IN (SELECT cost_profile_sha256 FROM evaluations WHERE revision_id=?)", (rid,))}
     for e in r["evaluations"]:
         e["metrics"] = json.loads(e.pop("metrics_json"))
+        e["cost_profile"] = profiles.get(e["cost_profile_sha256"])  # None : évaluation antérieure à l'enregistrement des profils
         e["window"] = json.loads(e.pop("window_json"))
     from ..mql5.generator import check_exportable
     r["export_blockers"] = check_exportable(r["content"], "NY+7")

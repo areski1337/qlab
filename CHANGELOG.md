@@ -2,6 +2,18 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/). Versions des composants : `engine/src/qlab/core/versions.py`.
 
+## [0.7.0] — 2026-10-15
+### Ajouté
+- Rapport de performance détaillé (Backtests) : toutes les métriques calculées par le moteur avec leur définition exacte au survol (rendement, risque, trades), coûts supportés et part du profit brut absorbée par les coûts, signaux non exécutés par motif, arrêt du contrôleur de risque, résultat par année, séquences de pertes/gains, payoff, concentration du profit (5 meilleurs trades), MAE/MFE moyennes et nuage MAE / résultat.
+- Profil de coûts conservé avec chaque évaluation (migration 0010 `cost_profiles`, ajout pur) et affiché dans le rapport ; les évaluations antérieures sont signalées « profil non enregistré ».
+- Éditeur de coûts complet partout où l'on lance un backtest, une validation ou une vérification MT5 : mode de spread (historique, fixe, max), plancher, commission, glissement, swap ; dataset, contexte et coûts préremplis depuis la campagne d'origine de la stratégie ; toute valeur modifiée est étiquetée « assumed ».
+- Préférence « Encadrés de lecture des graphiques » (désactivée par défaut) ; les encadrés porteurs d'une hypothèse ou d'une limite restent toujours affichés. Densité compacte par défaut.
+### Performances (mesurées sur la base de développement)
+- `GET /datasets/{id}/bars` : 655 → 20 ms (2 000 barres) et 722 → 130 ms (20 000 barres) grâce au cache des versions déjà vérifiées (immuables, 3 au plus).
+- Paquet initial de l'interface : 567 → 254 Ko (80 Ko compressé) ; écrans et bibliothèque de graphiques chargés à la demande.
+- Plus de rechargements en rafale pendant une campagne : les vues ne se rechargent qu'aux changements d'état des tâches ; celles qui affichent une progression, au plus toutes les 1,5 s.
+- Tableaux paginés (200 lignes par page, tri sur l'ensemble) ; en-têtes triables et lignes activables au clavier.
+
 ## [0.6.2] — 2026-10-15
 ### Corrigé
 - API : un jeton contenant un caractère non ASCII est refusé (401) au lieu de provoquer une erreur 500.

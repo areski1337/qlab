@@ -1,15 +1,24 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
-import { Dashboard } from "./screens/Dashboard";
-import { Campaigns, CampaignLab, Pareto } from "./screens/Campaigns";
-import { Data } from "./screens/Data";
-import { GenomeExplorer, Passport, Backtests } from "./screens/Genome";
-import { Mt5 } from "./screens/Mt5";
-import { Portfolio, Demo } from "./screens/Portfolio";
-import { Tasks, Settings } from "./screens/System";
-import { Guide } from "./screens/Guide";
-import { Library } from "./screens/Library";
+// Écrans chargés à la demande : démarrage plus rapide, bibliothèque de graphiques hors du paquet initial.
+const lz = <K extends string>(load: () => Promise<Record<K, React.FC>>, name: K) =>
+  React.lazy(() => load().then((x) => ({ default: x[name] })));
+const Dashboard = lz(() => import("./screens/Dashboard"), "Dashboard");
+const Campaigns = lz(() => import("./screens/Campaigns"), "Campaigns");
+const CampaignLab = lz(() => import("./screens/Campaigns"), "CampaignLab");
+const Pareto = lz(() => import("./screens/Campaigns"), "Pareto");
+const Data = lz(() => import("./screens/Data"), "Data");
+const GenomeExplorer = lz(() => import("./screens/Genome"), "GenomeExplorer");
+const Passport = lz(() => import("./screens/Genome"), "Passport");
+const Backtests = lz(() => import("./screens/Genome"), "Backtests");
+const Mt5 = lz(() => import("./screens/Mt5"), "Mt5");
+const Portfolio = lz(() => import("./screens/Portfolio"), "Portfolio");
+const Demo = lz(() => import("./screens/Portfolio"), "Demo");
+const Tasks = lz(() => import("./screens/System"), "Tasks");
+const Settings = lz(() => import("./screens/System"), "Settings");
+const Guide = lz(() => import("./screens/Guide"), "Guide");
+const Library = lz(() => import("./screens/Library"), "Library");
 import { Personalize } from "./personalize";
 import { PrefsProvider, THEMES, usePrefs } from "./prefs";
 import { Icon, Logo } from "./icons";
@@ -109,7 +118,7 @@ function App() {
           </React.Fragment>)}
         </nav>
 
-        <main>{engine.state === "failed" ? <EngineDown detail={engine.detail} /> : <Cur key={cur.k} />}</main>
+        <main>{engine.state === "failed" ? <EngineDown detail={engine.detail} /> : <React.Suspense fallback={<p className="muted">Chargement de l'écran…</p>}><Cur key={cur.k} /></React.Suspense>}</main>
 
         {p.activity && <Activity events={events} />}
 
@@ -149,7 +158,7 @@ function Clock() {
 
 function Activity({ events }: { events: { ts: string; text: string; err?: boolean }[] }) {
   const { nav, go } = useNav();
-  const t = useApi<any[]>("/tasks", [], true);
+  const t = useApi<any[]>("/tasks", [], "progress");
   const active = t.data?.filter((x) => ["queued", "validating", "running", "paused"].includes(x.state)) ?? [];
   return (
     <aside className="side" aria-label="Activité">

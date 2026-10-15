@@ -21,8 +21,10 @@ export function clean<T extends { time: number }>(pts: T[], ok: (p: T) => boolea
 }
 
 /** « Lecture » : comment lire le graphique, en une ou deux phrases. */
-export function Explain({ children }: { children: React.ReactNode }) {
-  return <div className="explain"><Icon n="info" s={15} /><div>{children}</div></div>;
+/** Encadré de lecture ; `always` : contient une hypothèse ou une limite, affiché même si les encadrés sont masqués. */
+export function Explain({ children, always }: { children: React.ReactNode; always?: boolean }) {
+  const { p } = usePrefs();
+  return p.explain || always ? <div className="explain"><Icon n="info" s={15} /><div>{children}</div></div> : null;
 }
 
 function useTvChart(height: number, deps: any[], build: (c: IChartApi, col: ReturnType<typeof themeColors>) => (() => void) | void) {
@@ -374,21 +376,6 @@ export function Lines({ series, xl, unit, height = 240 }: { series: { name: stri
             {p && <b style={{ color: "var(--fg)" }}>{fmtN(p.y, 3)}</b>}{p && <span>({xl} {fmtN(p.x, 0)})</span>}</span>); })}
       </div>
     </div>
-  );
-}
-
-/** Mini-courbe pour tuiles KPI. */
-export function Spark({ ys }: { ys: number[] }) {
-  const v = ys.filter(Number.isFinite);
-  if (v.length < 2) return null;
-  const lo = Math.min(...v), hi = Math.max(...v) === lo ? lo + 1 : Math.max(...v);
-  const d = v.map((y, i) => `${i ? "L" : "M"}${(i / (v.length - 1) * 100).toFixed(1)},${(36 - (y - lo) / (hi - lo) * 32).toFixed(1)}`).join("");
-  const up = v[v.length - 1] >= v[0];
-  return (
-    <svg className="spark" viewBox="0 0 100 38" preserveAspectRatio="none" aria-hidden="true">
-      <path d={d + "L100,38L0,38Z"} style={{ fill: up ? "var(--up)" : "var(--down)", opacity: 0.12 }} />
-      <path d={d} fill="none" style={{ stroke: up ? "var(--up)" : "var(--down)" }} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-    </svg>
   );
 }
 

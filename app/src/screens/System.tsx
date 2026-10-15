@@ -3,11 +3,11 @@ import { api } from "../api";
 import { Badge, Btn, Card, Err, Field, fmt, Json, PageHead, Table, TaskControls, useAction, useApi, utc } from "../ui";
 
 export function Tasks() {
-  const t = useApi<any[]>("/tasks", [], true);
+  const t = useApi<any[]>("/tasks", [], "progress");
   const logs = useApi<any[]>("/logs?n=300", [], true);
   const audit = useApi<any[]>("/audit?n=300", [], true);
   const [sel, setSel] = useState<any>(null);
-  const detail = useApi(sel ? `/tasks/${sel.id}` : null, [sel?.id], true);
+  const detail = useApi(sel ? `/tasks/${sel.id}` : null, [sel?.id], "progress");
   const a = useAction();
   const act = (id: string, x: string) => a.run(() => api.post(`/tasks/${id}/${x}`), () => `Action « ${x} » appliquée`);
   return (

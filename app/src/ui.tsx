@@ -1,13 +1,32 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import { Spark } from "./charts";
 
 export const fmt = (x: any, d = 2) =>
   x === null || x === undefined || Number.isNaN(x) ? "—" : typeof x === "number" ? x.toLocaleString("fr-FR", { maximumFractionDigits: d }) : String(x);
 export const utc = (ts?: number) => (ts ? new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "—");
 
-/** Charge une ressource API ; recharge sur événement de tâche si `live`. */
-export function useApi<T = any>(path: string | null, deps: any[] = [], live = false) {
+// Un seul abonnement au flux d'événements : distingue un changement d'état de tâche (rechargement utile partout)
+// d'une simple progression (émise à chaque lot d'une campagne : ne recharger que les vues qui l'affichent).
+type Change = "state" | "progress";
+const subs = new Set<(c: Change) => void>();
+const lastState = new Map<string, string>();
+let wired = false;
+function wire() {
+  if (wired) return;
+  wired = true;
+  window.qlab.onEvent((ev) => {
+    if (ev.type === "engine.ready") return subs.forEach((f) => f("state"));
+    if (ev.type !== "task.updated") return;
+    const t = ev.task ?? {};
+    const c: Change = lastState.get(t.id) !== t.state ? "state" : "progress";
+    lastState.set(t.id, t.state);
+    subs.forEach((f) => f(c));
+  });
+}
+
+/** Charge une ressource API. `live` : recharge quand une tâche change d'état ; "progress" : aussi sur la
+ * progression, au plus toutes les 1,5 s. */
+export function useApi<T = any>(path: string | null, deps: any[] = [], live: boolean | "progress" = false) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,11 +38,16 @@ export function useApi<T = any>(path: string | null, deps: any[] = [], live = fa
   useEffect(() => { reload(); }, [reload, ...deps]);
   useEffect(() => {
     if (!live) return;
-    let t: any = null;
-    const off = window.qlab.onEvent((ev) => {
-      if (ev.type === "task.updated" || ev.type === "engine.ready") { clearTimeout(t); t = setTimeout(reload, 400); }
-    });
-    return () => { off(); clearTimeout(t); };
+    wire();
+    let t: any = null, last = 0;
+    const f = (c: Change) => {
+      if (c === "progress" && live !== "progress") return;
+      clearTimeout(t);
+      const wait = c === "state" ? 400 : Math.max(0, 1500 - (Date.now() - last));
+      t = setTimeout(() => { last = Date.now(); reload(); }, wait);
+    };
+    subs.add(f);
+    return () => { subs.delete(f); clearTimeout(t); };
   }, [live, reload]);
   return { data, error, loading, reload };
 }
@@ -106,33 +130,47 @@ export function useAction() {
 }
 
 /** Tableau triable. `tone` : colonnes numériques colorées selon le signe. */
+const PAGE = 200;  // lignes rendues par page : les grandes listes (5 000 candidats) restent fluides
+
+/** Tableau triable (en-têtes au clavier), paginé, lignes activables au clavier. `tone` : couleur selon le signe. */
 export function Table({ cols, rows, onRow, empty = "Aucune donnée." }: {
   cols: { k: string; t: string; f?: (r: any) => React.ReactNode; num?: boolean; tone?: boolean }[]; rows: any[] | null; onRow?: (r: any) => void; empty?: string;
 }) {
   const [sort, setSort] = useState<{ k: string; asc: boolean } | null>(null);
-  if (!rows) return <p className="muted">Chargement…</p>;
-  if (!rows.length) return <p className="muted">{empty}</p>;
+  const [page, setPage] = useState(0);
   const get = (r: any, k: string) => k.split(".").reduce((a, x) => (a == null ? a : a[x]), r);
-  const sorted = sort ? [...rows].sort((a, b) => {
+  const sorted = useMemo(() => !rows || !sort ? rows : [...rows].sort((a, b) => {
     const x = get(a, sort.k), y = get(b, sort.k);
     const c = x == null ? 1 : y == null ? -1 : x > y ? 1 : x < y ? -1 : 0;
     return sort.asc ? c : -c;
-  }) : rows;
+  }), [rows, sort]);
+  if (!sorted) return <p className="muted">Chargement…</p>;
+  if (!sorted.length) return <p className="muted">{empty}</p>;
+  const pages = Math.ceil(sorted.length / PAGE), p = Math.min(page, pages - 1);
+  const view = sorted.slice(p * PAGE, (p + 1) * PAGE);
   return (
-    <div className="tablewrap"><table>
-      <thead><tr>{cols.map((c, i) => (
-        <th key={c.k + i} className={c.num ? "num" : ""} aria-sort={sort?.k === c.k ? (sort.asc ? "ascending" : "descending") : undefined}
-          onClick={() => setSort({ k: c.k, asc: sort?.k === c.k ? !sort.asc : false })}>
-          {c.t}{sort?.k === c.k ? (sort.asc ? " ▲" : " ▼") : ""}</th>))}</tr></thead>
-      <tbody>{sorted.map((r, i) => (
-        <tr key={r.id ?? i} onClick={() => onRow?.(r)} className={onRow ? "click" : ""}>
-          {cols.map((c, j) => {
-            const v = get(r, c.k);
-            const tone = c.tone && typeof v === "number" ? (v > 0 ? " pos" : v < 0 ? " neg" : "") : "";
-            return <td key={c.k + j} className={(c.num ? "num" : "") + tone}>{c.f ? c.f(r) : fmt(v)}</td>;
-          })}
-        </tr>))}</tbody>
-    </table></div>
+    <>
+      <div className="tablewrap"><table>
+        <thead><tr>{cols.map((c, i) => (
+          <th key={c.k + i} className={c.num ? "num" : ""} aria-sort={sort?.k === c.k ? (sort.asc ? "ascending" : "descending") : undefined}>
+            <button type="button" className="th" onClick={() => setSort({ k: c.k, asc: sort?.k === c.k ? !sort.asc : false })}>
+              {c.t}{sort?.k === c.k ? (sort.asc ? " ▲" : " ▼") : ""}</button></th>))}</tr></thead>
+        <tbody>{view.map((r, i) => (
+          <tr key={r.id ?? i} onClick={() => onRow?.(r)} className={onRow ? "click" : ""} tabIndex={onRow ? 0 : undefined}
+            onKeyDown={onRow ? (e) => { if (e.key === "Enter" && e.target === e.currentTarget) onRow(r); } : undefined}>
+            {cols.map((c, j) => {
+              const v = get(r, c.k);
+              const tone = c.tone && typeof v === "number" ? (v > 0 ? " pos" : v < 0 ? " neg" : "") : "";
+              return <td key={c.k + j} className={(c.num ? "num" : "") + tone}>{c.f ? c.f(r) : fmt(v)}</td>;
+            })}
+          </tr>))}</tbody>
+      </table></div>
+      {pages > 1 && <div className="pager">
+        <span className="muted">{fmt(p * PAGE + 1, 0)}–{fmt(Math.min(sorted.length, (p + 1) * PAGE), 0)} sur {fmt(sorted.length, 0)}</span>
+        <button className="btn ghost" disabled={p === 0} onClick={() => setPage(p - 1)}>‹ Précédent</button>
+        <button className="btn ghost" disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>Suivant ›</button>
+      </div>}
+    </>
   );
 }
 
@@ -156,6 +194,21 @@ export function TaskControls({ t, onDone, compact }: { t: { id: string; kind: st
         title={t.state === "running" && t.kind !== "campaign" ? "Le calcul déjà lancé se termine en arrière-plan ; son résultat sera ignoré" : "Arrêt définitif"}
         onClick={() => act("cancel", "Tâche arrêtée.")}>■ Arrêter</Btn>}
     </span>
+  );
+}
+
+/** Mini-courbe pour tuiles KPI. */
+export function Spark({ ys }: { ys: number[] }) {
+  const v = ys.filter(Number.isFinite);
+  if (v.length < 2) return null;
+  const lo = Math.min(...v), hi = Math.max(...v) === lo ? lo + 1 : Math.max(...v);
+  const d = v.map((y, i) => `${i ? "L" : "M"}${(i / (v.length - 1) * 100).toFixed(1)},${(36 - (y - lo) / (hi - lo) * 32).toFixed(1)}`).join("");
+  const up = v[v.length - 1] >= v[0];
+  return (
+    <svg className="spark" viewBox="0 0 100 38" preserveAspectRatio="none" aria-hidden="true">
+      <path d={d + "L100,38L0,38Z"} style={{ fill: up ? "var(--up)" : "var(--down)", opacity: 0.12 }} />
+      <path d={d} fill="none" style={{ stroke: up ? "var(--up)" : "var(--down)" }} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }
 

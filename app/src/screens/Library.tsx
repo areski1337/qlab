@@ -90,7 +90,7 @@ function Compare({ ids, lib }: { ids: string[]; lib: any[] }) {
             <tr key={k}><td className="muted">{k}</td>{details.map((d, i) => <td key={i} style={{ whiteSpace: "normal", minWidth: 220, verticalAlign: "top", fontSize: 12 }}>{d.data?.description?.[k] ?? "—"}</td>)}</tr>))}
         </tbody>
       </table></div>
-      <Explain>En <b>accent</b> : la meilleure valeur de la ligne (drawdown : la plus faible). Métriques de la dernière évaluation de recherche (entraînement + validation) ou, à défaut, d'entraînement : à comparer seulement entre stratégies évaluées sur le même marché et la même période.</Explain>
+      <Explain always>En <b>accent</b> : la meilleure valeur de la ligne (drawdown : la plus faible). Métriques de la dernière évaluation de recherche (entraînement + validation) ou, à défaut, d'entraînement : à comparer seulement entre stratégies évaluées sur le même marché et la même période.</Explain>
     </Card>
   );
 }
